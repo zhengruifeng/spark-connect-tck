@@ -51,6 +51,24 @@ CASES = (
         ),
     ),
     TckCase(
+        "TCK-WIRE-001",
+        "A direct ExecutePlan protobuf Range request returns typed Arrow results.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / ExecutePlan", "Relations / Range", "Result delivery / Arrow IPC batches"),
+    ),
+    TckCase(
+        "TCK-WIRE-002",
+        "A direct AnalyzePlan protobuf Schema request returns the Range schema.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / AnalyzePlan", "AnalyzePlan / Schema", "Relations / Range"),
+    ),
+    TckCase(
+        "TCK-WIRE-003",
+        "Direct Config Set and Get protobuf requests preserve session state.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / Config", "Configuration / spark.sql.session.timeZone"),
+    ),
+    TckCase(
         "TCK-EXEC-001",
         "Empty tabular execution preserves its schema and completes successfully.",
         "SC-1.0-P1-WIRE",

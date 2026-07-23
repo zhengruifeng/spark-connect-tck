@@ -4,14 +4,28 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import pytest
 
 from spark_connect_tck.spec import CASES_BY_ID
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from pyspark.sql.connect.session import SparkSession
+
+
+@dataclass(frozen=True)
+class RawSparkConnectSession:
+    """Direct gRPC access to one isolated Spark Connect server session."""
+
+    proto: Any
+    stub: Any
+    session_id: str
+    user_context: Any
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -83,3 +97,26 @@ def isolated_spark(spark: SparkSession) -> Iterator[SparkSession]:
         yield session
     finally:
         session.stop()
+
+
+@pytest.fixture
+def raw_spark_connect(spark_connect_url: str) -> Iterator[RawSparkConnectSession]:
+    """Open a generated gRPC stub without constructing a SparkSession client.
+
+    The URL channel builder is used only to preserve Spark Connect endpoint, TLS,
+    and token handling.  TCK tests using this fixture construct every protobuf
+    request and invoke the generated service stub themselves.
+    """
+    from pyspark.sql.connect.client.core import DefaultChannelBuilder
+    from pyspark.sql.connect.proto import base_pb2, base_pb2_grpc
+
+    channel = DefaultChannelBuilder(spark_connect_url).toChannel()
+    try:
+        yield RawSparkConnectSession(
+            proto=base_pb2,
+            stub=base_pb2_grpc.SparkConnectServiceStub(channel),
+            session_id=str(uuid4()),
+            user_context=base_pb2.UserContext(user_id="spark-connect-tck-wire"),
+        )
+    finally:
+        channel.close()

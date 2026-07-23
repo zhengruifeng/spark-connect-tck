@@ -1,8 +1,8 @@
 # Spark Connect TCK
 
 A Python implementation of a Technology Compatibility Kit (TCK) for Spark
-Connect servers. The suite exercises the public PySpark Connect client API
-against a separately running target server.
+Connect servers. The suite exercises public PySpark Connect APIs and selected
+generated gRPC/protobuf requests against a separately running target server.
 
 The intended implementation requirements are recorded in the [Spark Connect
 1.0 draft](https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz).
@@ -22,6 +22,9 @@ test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-EXEC-001` | Execution | A typed zero-row query completes successfully. |
 | `TCK-EXEC-002` | Execution | Named SQL parameters bind as typed expressions. |
 | `TCK-ANALYZE-001` | Analysis | Required relation schema and properties are available. |
+| `TCK-WIRE-001` | Wire protocol | A direct `ExecutePlan` Range request returns typed Arrow results. |
+| `TCK-WIRE-002` | Wire protocol | A direct `AnalyzePlan` Schema request returns the Range schema. |
+| `TCK-WIRE-003` | Wire protocol | Direct `Config` Set/Get requests preserve session state. |
 | `TCK-SESSION-001` | Sessions | Runtime configuration and temporary views are session-isolated. |
 | `TCK-CONFIG-001` | Configuration | `spark.sql.session.timeZone` is settable, readable, and observable. |
 | `TCK-CONFIG-002` | Configuration | SQL `SET`/`RESET` and `RuntimeConfig` share session state. |
@@ -38,8 +41,11 @@ test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-SQL-003` | SQL | Joins, grouping, and `HAVING` interoperate. |
 | `TCK-PRESENTATION-001` | Presentation | `DataFrame.show()` produces the required table rendering. |
 
-Cases use public PySpark Connect APIs and SQL rows in the draft's required
-profile. The TCK does not start, configure, or manage the server being tested.
+Cases use public PySpark Connect APIs, SQL rows, and a small direct generated
+protobuf/gRPC slice in the draft's required profile. The wire cases construct
+their `Plan` and RPC requests themselves; they do not route those calls through
+`SparkSession`. The TCK does not start, configure, or manage the server being
+tested.
 
 ## Run it
 
