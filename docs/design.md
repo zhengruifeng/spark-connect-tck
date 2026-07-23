@@ -13,10 +13,12 @@ Apache Spark 4.2.0 at commit
 client, provider, function, and SQL sub-manifests. A passing target must pass
 the complete required profile; per-area results are diagnostic only.
 
-This repository contains a basic executable slice of the wire and SQL
+This repository contains an executable slice of the wire and SQL
 sub-manifests. Its cases are registered in `spark_connect_tck.spec`, where
 each one records its `SC-1.0-P1` manifest and rows. Pytest collection rejects
-any live-target test that is not registered there.
+any live-target test that is not registered there. The direct-wire registry
+also maps each baseline service RPC to at least one test, and a unit test fails
+if that request inventory is incomplete.
 
 The starter slice covers:
 
@@ -36,8 +38,8 @@ The starter slice covers:
 
 This is not a conformance release. In particular, it does not yet implement
 the linked `SC-1.0-P1-CLIENT` overload manifest, the exhaustive function and
-provider manifests, raw gRPC/error-envelope assertions, Arrow framing,
-authorization harness, full catalog/configuration coverage, or the complete
+provider manifests, all raw gRPC error-envelope variants, authorization
+harness, full catalog/configuration coverage, or the complete
 relation/expression/command matrix.
 
 ## Test contract

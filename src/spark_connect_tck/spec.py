@@ -19,6 +19,26 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
+# The Spark Connect 4.2 service request inventory.  These are the RPCs that a
+# required-profile wire implementation must expose; extension RPCs are out of
+# scope until they appear in the specification manifest.
+REQUIRED_WIRE_RPCS = frozenset(
+    {
+        "AddArtifacts",
+        "AnalyzePlan",
+        "ArtifactStatus",
+        "CloneSession",
+        "Config",
+        "ExecutePlan",
+        "FetchErrorDetails",
+        "GetStatus",
+        "Interrupt",
+        "ReattachExecute",
+        "ReleaseExecute",
+        "ReleaseSession",
+    }
+)
+
 
 @dataclass(frozen=True)
 class TckCase:
@@ -28,6 +48,7 @@ class TckCase:
     title: str
     manifest: str
     rows: tuple[str, ...]
+    rpc_methods: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not _CASE_ID.fullmatch(self.case_id):
@@ -36,6 +57,9 @@ class TckCase:
             raise ValueError(f"Case {self.case_id} must cite an SC-1.0-P1 manifest")
         if not self.rows:
             raise ValueError(f"Case {self.case_id} must cite at least one manifest row")
+        unknown_rpcs = set(self.rpc_methods) - REQUIRED_WIRE_RPCS
+        if unknown_rpcs:
+            raise ValueError(f"Case {self.case_id} cites unknown RPCs: {sorted(unknown_rpcs)}")
 
 
 CASES = (
@@ -55,18 +79,63 @@ CASES = (
         "A direct ExecutePlan protobuf Range request returns typed Arrow results.",
         "SC-1.0-P1-WIRE",
         ("gRPC RPCs / ExecutePlan", "Relations / Range", "Result delivery / Arrow IPC batches"),
+        ("ExecutePlan",),
     ),
     TckCase(
         "TCK-WIRE-002",
         "A direct AnalyzePlan protobuf Schema request returns the Range schema.",
         "SC-1.0-P1-WIRE",
         ("gRPC RPCs / AnalyzePlan", "AnalyzePlan / Schema", "Relations / Range"),
+        ("AnalyzePlan",),
     ),
     TckCase(
         "TCK-WIRE-003",
         "Direct Config Set and Get protobuf requests preserve session state.",
         "SC-1.0-P1-WIRE",
         ("gRPC RPCs / Config", "Configuration / spark.sql.session.timeZone"),
+        ("Config",),
+    ),
+    TckCase(
+        "TCK-WIRE-004",
+        "Direct artifact upload and status protobuf requests round-trip a session artifact.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / AddArtifacts", "gRPC RPCs / ArtifactStatus"),
+        ("AddArtifacts", "ArtifactStatus"),
+    ),
+    TckCase(
+        "TCK-WIRE-005",
+        "Direct interrupt and operation-status protobuf requests report an idle session.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / Interrupt", "gRPC RPCs / GetStatus"),
+        ("Interrupt", "GetStatus"),
+    ),
+    TckCase(
+        "TCK-WIRE-006",
+        "A reattachable execution can be reattached to and explicitly released.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / ReattachExecute", "gRPC RPCs / ReleaseExecute"),
+        ("ReattachExecute", "ReleaseExecute"),
+    ),
+    TckCase(
+        "TCK-WIRE-007",
+        "A direct release-session protobuf request releases an established session.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / ReleaseSession",),
+        ("ReleaseSession",),
+    ),
+    TckCase(
+        "TCK-WIRE-008",
+        "A direct fetch-error-details protobuf request reports an unknown error ID precisely.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / FetchErrorDetails",),
+        ("FetchErrorDetails",),
+    ),
+    TckCase(
+        "TCK-WIRE-009",
+        "A direct clone-session protobuf request copies session configuration to the clone.",
+        "SC-1.0-P1-WIRE",
+        ("gRPC RPCs / CloneSession",),
+        ("CloneSession",),
     ),
     TckCase(
         "TCK-EXEC-001",
@@ -180,6 +249,7 @@ CASES = (
 )
 
 CASES_BY_ID = {case.case_id: case for case in CASES}
+IMPLEMENTED_WIRE_RPCS = frozenset(rpc_method for case in CASES for rpc_method in case.rpc_methods)
 
 
 def get_case(case_id: str) -> TckCase:

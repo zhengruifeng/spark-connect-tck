@@ -25,6 +25,12 @@ test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-001` | Wire protocol | A direct `ExecutePlan` Range request returns typed Arrow results. |
 | `TCK-WIRE-002` | Wire protocol | A direct `AnalyzePlan` Schema request returns the Range schema. |
 | `TCK-WIRE-003` | Wire protocol | Direct `Config` Set/Get requests preserve session state. |
+| `TCK-WIRE-004` | Wire protocol | Direct `AddArtifacts` and `ArtifactStatus` requests round-trip an artifact. |
+| `TCK-WIRE-005` | Wire protocol | Direct `Interrupt` and `GetStatus` requests report an idle session. |
+| `TCK-WIRE-006` | Wire protocol | A reattachable request supports direct `ReattachExecute` and `ReleaseExecute`. |
+| `TCK-WIRE-007` | Wire protocol | A direct `ReleaseSession` request releases an established session. |
+| `TCK-WIRE-008` | Wire protocol | A direct `FetchErrorDetails` request returns the defined unknown-ID response. |
+| `TCK-WIRE-009` | Wire protocol | A direct `CloneSession` request copies configuration into the clone. |
 | `TCK-SESSION-001` | Sessions | Runtime configuration and temporary views are session-isolated. |
 | `TCK-CONFIG-001` | Configuration | `spark.sql.session.timeZone` is settable, readable, and observable. |
 | `TCK-CONFIG-002` | Configuration | SQL `SET`/`RESET` and `RuntimeConfig` share session state. |
@@ -46,6 +52,14 @@ protobuf/gRPC slice in the draft's required profile. The wire cases construct
 their `Plan` and RPC requests themselves; they do not route those calls through
 `SparkSession`. The TCK does not start, configure, or manage the server being
 tested.
+
+The direct cases cover every request in the baseline Spark Connect service
+inventory: `ExecutePlan`, `AnalyzePlan`, `Config`, `AddArtifacts`,
+`ArtifactStatus`, `Interrupt`, `ReattachExecute`, `ReleaseExecute`,
+`ReleaseSession`, `FetchErrorDetails`, `CloneSession`, and `GetStatus`. A unit
+test enforces this inventory-to-case mapping. Each case verifies a successful
+or specified empty response; it does not make all optional request fields or
+extension messages mandatory.
 
 ## Run it
 

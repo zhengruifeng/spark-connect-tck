@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
+from zlib import crc32
 
 import pytest
 
@@ -73,6 +74,60 @@ def _decode_arrow_rows(arrow_responses: Iterable[Any]) -> list[int]:
 
     assert not chunks
     return rows
+
+
+def _get_time_zone(raw_spark_connect: RawSparkConnectSession) -> Any:
+    """Create the raw session, returning its Config response and server-side ID."""
+    proto = raw_spark_connect.proto
+    return raw_spark_connect.stub.Config(
+        proto.ConfigRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            operation=proto.ConfigRequest.Operation(
+                get=proto.ConfigRequest.Get(keys=["spark.sql.session.timeZone"])
+            ),
+        ),
+        timeout=30,
+    )
+
+
+def _assert_unary_response_identity(
+    response: Any, raw_spark_connect: RawSparkConnectSession
+) -> None:
+    """Check identity fields shared by all unary service responses."""
+    assert response.session_id == raw_spark_connect.session_id
+    assert response.server_side_session_id
+    UUID(response.server_side_session_id)
+
+
+def _execute_reattachable_range(
+    raw_spark_connect: RawSparkConnectSession,
+) -> tuple[str, list[Any]]:
+    """Start and consume a reattachable Range operation through the raw stub."""
+    proto = raw_spark_connect.proto
+    operation_id = str(uuid4())
+    request = proto.ExecutePlanRequest(
+        session_id=raw_spark_connect.session_id,
+        user_context=raw_spark_connect.user_context,
+        operation_id=operation_id,
+        client_type="spark-connect-tck",
+        plan=_range_plan(proto),
+        request_options=[
+            proto.ExecutePlanRequest.RequestOption(
+                reattach_options=proto.ReattachOptions(reattachable=True)
+            )
+        ],
+    )
+    responses = list(raw_spark_connect.stub.ExecutePlan(request, timeout=30))
+
+    assert responses
+    _assert_response_identity(responses, raw_spark_connect.session_id, operation_id)
+    assert any(response.HasField("result_complete") for response in responses)
+    assert _decode_arrow_rows(
+        response for response in responses if response.HasField("arrow_batch")
+    ) == [0, 1]
+    return operation_id, responses
 
 
 @pytest.mark.smoke
@@ -169,3 +224,223 @@ def test_tck_wire_003_config_set_and_get_share_the_raw_session(
         UUID(response.server_side_session_id)
     assert get_response.server_side_session_id == set_response.server_side_session_id
     assert [(pair.key, pair.value) for pair in get_response.pairs] == [(key, "UTC")]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-004")
+def test_tck_wire_004_artifact_upload_and_status_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """AddArtifacts and ArtifactStatus send and verify a hand-built artifact request."""
+    proto = raw_spark_connect.proto
+    artifact_name = f"cache/{uuid4().hex}"
+    data = b"spark-connect-tck"
+    add_request = proto.AddArtifactsRequest(
+        session_id=raw_spark_connect.session_id,
+        user_context=raw_spark_connect.user_context,
+        client_type="spark-connect-tck",
+        batch=proto.AddArtifactsRequest.Batch(
+            artifacts=[
+                proto.AddArtifactsRequest.SingleChunkArtifact(
+                    name=artifact_name,
+                    data=proto.AddArtifactsRequest.ArtifactChunk(data=data, crc=crc32(data)),
+                )
+            ]
+        ),
+    )
+
+    add_response = raw_spark_connect.stub.AddArtifacts(iter([add_request]), timeout=30)
+    status_response = raw_spark_connect.stub.ArtifactStatus(
+        proto.ArtifactStatusesRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            client_observed_server_side_session_id=add_response.server_side_session_id,
+            names=[artifact_name],
+        ),
+        timeout=30,
+    )
+
+    _assert_unary_response_identity(add_response, raw_spark_connect)
+    _assert_unary_response_identity(status_response, raw_spark_connect)
+    assert add_response.server_side_session_id == status_response.server_side_session_id
+    assert [(artifact.name, artifact.is_crc_successful) for artifact in add_response.artifacts] == [
+        (artifact_name, True)
+    ]
+    assert status_response.statuses[artifact_name].exists
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-005")
+def test_tck_wire_005_interrupt_and_get_status_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Interrupt and GetStatus use direct requests against an established idle session."""
+    proto = raw_spark_connect.proto
+    session_response = _get_time_zone(raw_spark_connect)
+    interrupt_response = raw_spark_connect.stub.Interrupt(
+        proto.InterruptRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            client_observed_server_side_session_id=session_response.server_side_session_id,
+            interrupt_type=proto.InterruptRequest.INTERRUPT_TYPE_ALL,
+        ),
+        timeout=30,
+    )
+    status_response = raw_spark_connect.stub.GetStatus(
+        proto.GetStatusRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            client_observed_server_side_session_id=interrupt_response.server_side_session_id,
+            operation_status=proto.GetStatusRequest.OperationStatusRequest(),
+        ),
+        timeout=30,
+    )
+
+    _assert_unary_response_identity(interrupt_response, raw_spark_connect)
+    _assert_unary_response_identity(status_response, raw_spark_connect)
+    assert interrupt_response.interrupted_ids == []
+    assert list(status_response.operation_statuses) == []
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-006")
+def test_tck_wire_006_reattach_and_release_execute_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """ReattachExecute repeats buffered results and ReleaseExecute frees the operation."""
+    proto = raw_spark_connect.proto
+    operation_id, initial_responses = _execute_reattachable_range(raw_spark_connect)
+    reattach_responses = list(
+        raw_spark_connect.stub.ReattachExecute(
+            proto.ReattachExecuteRequest(
+                session_id=raw_spark_connect.session_id,
+                user_context=raw_spark_connect.user_context,
+                client_type="spark-connect-tck",
+                client_observed_server_side_session_id=initial_responses[-1].server_side_session_id,
+                operation_id=operation_id,
+            ),
+            timeout=30,
+        )
+    )
+    release_response = raw_spark_connect.stub.ReleaseExecute(
+        proto.ReleaseExecuteRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            client_observed_server_side_session_id=initial_responses[-1].server_side_session_id,
+            operation_id=operation_id,
+            release_all=proto.ReleaseExecuteRequest.ReleaseAll(),
+        ),
+        timeout=30,
+    )
+
+    assert reattach_responses
+    _assert_response_identity(reattach_responses, raw_spark_connect.session_id, operation_id)
+    assert _decode_arrow_rows(
+        response for response in reattach_responses if response.HasField("arrow_batch")
+    ) == [0, 1]
+    _assert_unary_response_identity(release_response, raw_spark_connect)
+    assert release_response.operation_id == operation_id
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-007")
+def test_tck_wire_007_release_session_is_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """ReleaseSession directly releases a session that this test has established."""
+    proto = raw_spark_connect.proto
+    session_response = _get_time_zone(raw_spark_connect)
+    release_response = raw_spark_connect.stub.ReleaseSession(
+        proto.ReleaseSessionRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+        ),
+        timeout=30,
+    )
+
+    _assert_unary_response_identity(session_response, raw_spark_connect)
+    _assert_unary_response_identity(release_response, raw_spark_connect)
+    assert release_response.server_side_session_id == session_response.server_side_session_id
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-008")
+def test_tck_wire_008_fetch_unknown_error_details_is_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """FetchErrorDetails responds precisely when a valid but unknown ID is requested."""
+    proto = raw_spark_connect.proto
+    session_response = _get_time_zone(raw_spark_connect)
+    response = raw_spark_connect.stub.FetchErrorDetails(
+        proto.FetchErrorDetailsRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            client_observed_server_side_session_id=session_response.server_side_session_id,
+            error_id=str(uuid4()),
+        ),
+        timeout=30,
+    )
+
+    # The service returns the default protobuf response when the ID is absent;
+    # neither the session identity nor an error envelope is populated.
+    assert response.session_id == ""
+    assert response.server_side_session_id == ""
+    assert not response.HasField("root_error_idx")
+    assert list(response.errors) == []
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-009")
+def test_tck_wire_009_clone_session_is_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """CloneSession directly copies configuration into a caller-supplied session ID."""
+    proto = raw_spark_connect.proto
+    key = "spark.sql.session.timeZone"
+    set_response = raw_spark_connect.stub.Config(
+        proto.ConfigRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            operation=proto.ConfigRequest.Operation(
+                set=proto.ConfigRequest.Set(pairs=[proto.KeyValue(key=key, value="UTC")])
+            ),
+        ),
+        timeout=30,
+    )
+    cloned_session_id = str(uuid4())
+    clone_response = raw_spark_connect.stub.CloneSession(
+        proto.CloneSessionRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            client_observed_server_side_session_id=set_response.server_side_session_id,
+            new_session_id=cloned_session_id,
+        ),
+        timeout=30,
+    )
+    clone_config_response = raw_spark_connect.stub.Config(
+        proto.ConfigRequest(
+            session_id=cloned_session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            client_observed_server_side_session_id=clone_response.new_server_side_session_id,
+            operation=proto.ConfigRequest.Operation(get=proto.ConfigRequest.Get(keys=[key])),
+        ),
+        timeout=30,
+    )
+
+    _assert_unary_response_identity(set_response, raw_spark_connect)
+    _assert_unary_response_identity(clone_response, raw_spark_connect)
+    assert clone_response.new_session_id == cloned_session_id
+    assert clone_response.new_server_side_session_id
+    UUID(clone_response.new_server_side_session_id)
+    assert clone_config_response.session_id == cloned_session_id
+    assert clone_config_response.server_side_session_id == clone_response.new_server_side_session_id
+    assert [(pair.key, pair.value) for pair in clone_config_response.pairs] == [(key, "UTC")]
