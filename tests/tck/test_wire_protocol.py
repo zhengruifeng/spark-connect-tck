@@ -36,11 +36,11 @@ def _assert_response_identity(responses: Iterable[Any], session_id: str, operati
         UUID(response.response_id)
 
 
-def _decode_arrow_rows(arrow_responses: Iterable[Any]) -> list[int]:
+def _decode_arrow_batches(arrow_responses: Iterable[Any]) -> list[Any]:
     """Decode Arrow IPC data and validate optional response chunking metadata."""
     import pyarrow as pa
 
-    rows: list[int] = []
+    decoded_batches: list[Any] = []
     chunks: list[bytes] = []
     expected_chunks: int | None = None
 
@@ -66,14 +66,90 @@ def _decode_arrow_rows(arrow_responses: Iterable[Any]) -> list[int]:
         with pa.ipc.open_stream(b"".join(chunks)) as reader:
             batches = list(reader)
         assert sum(batch.num_rows for batch in batches) == arrow_batch.row_count
-        for batch in batches:
-            assert batch.schema.names == ["id"]
-            rows.extend(batch.column("id").to_pylist())
+        decoded_batches.extend(batches)
         chunks.clear()
         expected_chunks = None
 
     assert not chunks
+    return decoded_batches
+
+
+def _decode_arrow_rows(arrow_responses: Iterable[Any]) -> list[int]:
+    """Decode the single ``id`` column returned by a direct Range plan."""
+    rows: list[int] = []
+    for batch in _decode_arrow_batches(arrow_responses):
+        assert batch.schema.names == ["id"]
+        rows.extend(batch.column("id").to_pylist())
     return rows
+
+
+def _decode_arrow_tuples(
+    arrow_responses: Iterable[Any], expected_columns: list[str]
+) -> list[tuple[Any, ...]]:
+    """Decode named Arrow columns into deterministic Python row tuples."""
+    rows: list[tuple[Any, ...]] = []
+    for batch in _decode_arrow_batches(arrow_responses):
+        assert batch.schema.names == expected_columns
+        rows.extend(zip(*(batch.column(name).to_pylist() for name in expected_columns)))
+    return rows
+
+
+def _attribute(expressions: Any, name: str) -> Any:
+    """Build an unresolved attribute expression without using a Column client."""
+    expression = expressions.Expression()
+    expression.unresolved_attribute.unparsed_identifier = name
+    return expression
+
+
+def _long_literal(expressions: Any, value: int) -> Any:
+    """Build an integer literal expression without using a Column client."""
+    expression = expressions.Expression()
+    expression.literal.long = value
+    return expression
+
+
+def _function(expressions: Any, name: str, *arguments: Any) -> Any:
+    """Build a non-UDF unresolved function expression directly in protobuf."""
+    expression = expressions.Expression()
+    expression.unresolved_function.function_name = name
+    expression.unresolved_function.arguments.extend(arguments)
+    return expression
+
+
+def _alias(expressions: Any, expression: Any, name: str) -> Any:
+    """Build an aliased expression directly in protobuf."""
+    alias = expressions.Expression()
+    alias.alias.expr.CopyFrom(expression)
+    alias.alias.name.append(name)
+    return alias
+
+
+def _range_relation(relations: Any, end: int) -> Any:
+    """Build a Range relation that can be nested in a larger raw plan."""
+    relation = relations.Relation()
+    relation.range.start = 0
+    relation.range.end = end
+    relation.range.step = 1
+    relation.range.num_partitions = 1
+    return relation
+
+
+def _execute_relation(raw_spark_connect: RawSparkConnectSession, relation: Any) -> list[Any]:
+    """Execute one direct Relation plan and return the complete response stream."""
+    proto = raw_spark_connect.proto
+    operation_id = str(uuid4())
+    request = proto.ExecutePlanRequest(
+        session_id=raw_spark_connect.session_id,
+        user_context=raw_spark_connect.user_context,
+        operation_id=operation_id,
+        client_type="spark-connect-tck",
+        plan=proto.Plan(root=relation),
+    )
+    responses = list(raw_spark_connect.stub.ExecutePlan(request, timeout=30))
+
+    assert responses
+    _assert_response_identity(responses, raw_spark_connect.session_id, operation_id)
+    return responses
 
 
 def _get_time_zone(raw_spark_connect: RawSparkConnectSession) -> Any:
@@ -444,3 +520,121 @@ def test_tck_wire_009_clone_session_is_direct(
     assert clone_config_response.session_id == cloned_session_id
     assert clone_config_response.server_side_session_id == clone_response.new_server_side_session_id
     assert [(pair.key, pair.value) for pair in clone_config_response.pairs] == [(key, "UTC")]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-010")
+def test_tck_wire_010_basic_relations_and_expressions_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Build Range, Filter, Project, Sort, and Limit relation messages by hand."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    filtered = relations_pb2.Relation()
+    filtered.filter.input.CopyFrom(_range_relation(relations_pb2, end=8))
+    filtered.filter.condition.CopyFrom(
+        _function(
+            expressions_pb2,
+            ">",
+            _attribute(expressions_pb2, "id"),
+            _long_literal(expressions_pb2, 1),
+        )
+    )
+
+    projected = relations_pb2.Relation()
+    projected.project.input.CopyFrom(filtered)
+    projected.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "id"),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "+",
+                    _attribute(expressions_pb2, "id"),
+                    _long_literal(expressions_pb2, 10),
+                ),
+                "value",
+            ),
+        ]
+    )
+
+    sorted_relation = relations_pb2.Relation()
+    sorted_relation.sort.input.CopyFrom(projected)
+    sorted_relation.sort.order.append(
+        expressions_pb2.Expression.SortOrder(
+            child=_attribute(expressions_pb2, "id"),
+            direction=expressions_pb2.Expression.SortOrder.SORT_DIRECTION_DESCENDING,
+            null_ordering=expressions_pb2.Expression.SortOrder.SORT_NULLS_LAST,
+        )
+    )
+    sorted_relation.sort.is_global = True
+
+    limited = relations_pb2.Relation()
+    limited.limit.input.CopyFrom(sorted_relation)
+    limited.limit.limit = 3
+
+    responses = _execute_relation(raw_spark_connect, limited)
+
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")), ["id", "value"]
+    ) == [(7, 17), (6, 16), (5, 15)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-011")
+def test_tck_wire_011_basic_aggregate_expressions_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Build Range, Project, Aggregate, and Sort relation messages by hand."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    projected = relations_pb2.Relation()
+    projected.project.input.CopyFrom(_range_relation(relations_pb2, end=6))
+    projected.project.expressions.extend(
+        [
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "%",
+                    _attribute(expressions_pb2, "id"),
+                    _long_literal(expressions_pb2, 2),
+                ),
+                "bucket",
+            ),
+            _attribute(expressions_pb2, "id"),
+        ]
+    )
+
+    aggregated = relations_pb2.Relation()
+    aggregated.aggregate.input.CopyFrom(projected)
+    aggregated.aggregate.group_type = relations_pb2.Aggregate.GROUP_TYPE_GROUPBY
+    aggregated.aggregate.grouping_expressions.append(_attribute(expressions_pb2, "bucket"))
+    aggregated.aggregate.aggregate_expressions.extend(
+        [
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "sum", _attribute(expressions_pb2, "id")),
+                "total",
+            ),
+        ]
+    )
+
+    sorted_relation = relations_pb2.Relation()
+    sorted_relation.sort.input.CopyFrom(aggregated)
+    sorted_relation.sort.order.append(
+        expressions_pb2.Expression.SortOrder(
+            child=_attribute(expressions_pb2, "bucket"),
+            direction=expressions_pb2.Expression.SortOrder.SORT_DIRECTION_ASCENDING,
+            null_ordering=expressions_pb2.Expression.SortOrder.SORT_NULLS_LAST,
+        )
+    )
+    sorted_relation.sort.is_global = True
+
+    responses = _execute_relation(raw_spark_connect, sorted_relation)
+
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        ["bucket", "total"],
+    ) == [(0, 6), (1, 9)]

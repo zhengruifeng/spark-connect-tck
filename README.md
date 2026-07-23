@@ -31,6 +31,8 @@ test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-007` | Wire protocol | A direct `ReleaseSession` request releases an established session. |
 | `TCK-WIRE-008` | Wire protocol | A direct `FetchErrorDetails` request returns the defined unknown-ID response. |
 | `TCK-WIRE-009` | Wire protocol | A direct `CloneSession` request copies configuration into the clone. |
+| `TCK-WIRE-010` | Relations/expressions | A direct Range/Filter/Project/Sort/Limit plan returns its expected rows. |
+| `TCK-WIRE-011` | Relations/expressions | A direct Range/Project/Aggregate/Sort plan returns grouped totals. |
 | `TCK-SESSION-001` | Sessions | Runtime configuration and temporary views are session-isolated. |
 | `TCK-CONFIG-001` | Configuration | `spark.sql.session.timeZone` is settable, readable, and observable. |
 | `TCK-CONFIG-002` | Configuration | SQL `SET`/`RESET` and `RuntimeConfig` share session state. |
