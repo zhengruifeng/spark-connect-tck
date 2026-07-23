@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "spark-connect-tck"
+version = "0.1.0"
+description = "Python Technology Compatibility Kit for Spark Connect servers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Spark Connect TCK contributors" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+]
+dependencies = ["pyspark[connect]>=4.2,<5.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+lint = ["ruff>=0.6"]
+
+[project.urls]
+Documentation = "https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz"
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = [
+    "smoke: small, deterministic cases suitable for fast target validation",
+    "tck: Spark Connect compatibility cases that require a remote target",
+    "tck_case(case_id): trace a TCK case to its registered SC-1.0-P1 requirements",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
