@@ -38,6 +38,8 @@ test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-014` | Relations/expressions | Direct boolean, conditional, and cast expressions retain typed values. |
 | `TCK-WIRE-015` | Relations/expressions | Direct Arrow-backed LocalRelation and NA plans preserve null semantics. |
 | `TCK-WIRE-016` | Relations/expressions | Direct column mutation and deduplication plans preserve rows and schemas. |
+| `TCK-WIRE-017` | Relations/expressions | Direct partitioning, aliasing, renaming, and sample plans preserve rows. |
+| `TCK-WIRE-018` | Relations/expressions | Direct schema replacement and unpivot plans preserve typed values. |
 | `TCK-SESSION-001` | Sessions | Runtime configuration and temporary views are session-isolated. |
 | `TCK-CONFIG-001` | Configuration | `spark.sql.session.timeZone` is settable, readable, and observable. |
 | `TCK-CONFIG-002` | Configuration | SQL `SET`/`RESET` and `RuntimeConfig` share session state. |

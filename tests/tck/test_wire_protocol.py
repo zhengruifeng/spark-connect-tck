@@ -1004,3 +1004,119 @@ def test_tck_wire_016_column_mutation_and_deduplication_relations_are_direct(
         (response for response in by_row_responses if response.HasField("arrow_batch")),
         ["kind", "score_plus", "double_score"],
     ) == [("a", 11, 2), ("a", 13, 6), ("b", 12, 4)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-017")
+def test_tck_wire_017_partition_alias_rename_and_sample_relations_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Send partitioning, aliasing, renaming, and deterministic sample plans directly."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    repartitioned = relations_pb2.Relation()
+    repartitioned.repartition.input.CopyFrom(_range_relation(relations_pb2, end=4))
+    repartitioned.repartition.num_partitions = 1
+    repartitioned.repartition.shuffle = True
+
+    aliased = relations_pb2.Relation()
+    aliased.subquery_alias.input.CopyFrom(repartitioned)
+    aliased.subquery_alias.alias = "numbers"
+    aliased.subquery_alias.qualifier.append("tck")
+
+    renamed = relations_pb2.Relation()
+    renamed.to_df.input.CopyFrom(aliased)
+    renamed.to_df.column_names.append("value")
+
+    partitioned_by_value = relations_pb2.Relation()
+    partitioned_by_value.repartition_by_expression.input.CopyFrom(renamed)
+    partitioned_by_value.repartition_by_expression.partition_exprs.append(
+        _attribute(expressions_pb2, "value")
+    )
+    partitioned_by_value.repartition_by_expression.num_partitions = 1
+
+    sampled = relations_pb2.Relation()
+    sampled.sample.input.CopyFrom(partitioned_by_value)
+    sampled.sample.lower_bound = 0.0
+    sampled.sample.upper_bound = 1.0
+    sampled.sample.with_replacement = False
+    sampled.sample.seed = 17
+    sampled.sample.deterministic_order = True
+
+    responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, sampled, ["value"]),
+    )
+
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")), ["value"]
+    ) == [(0,), (1,), (2,), (3,)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-018")
+def test_tck_wire_018_to_schema_and_unpivot_relations_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Send an explicit DataType schema and an Unpivot relation directly."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2, types_pb2
+
+    table = pa.table(
+        {
+            "category": pa.array(["a", "b"]),
+            "first": pa.array([1, 3], type=pa.int32()),
+            "second": pa.array([2, 4], type=pa.int32()),
+        }
+    )
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+
+    local = relations_pb2.Relation()
+    local.local_relation.data = sink.getvalue().to_pybytes()
+
+    schema = types_pb2.DataType()
+    kind = schema.struct.fields.add()
+    kind.name = "category"
+    kind.data_type.string.SetInParent()
+    kind.nullable = True
+    left = schema.struct.fields.add()
+    left.name = "first"
+    left.data_type.long.SetInParent()
+    left.nullable = True
+    right = schema.struct.fields.add()
+    right.name = "second"
+    right.data_type.long.SetInParent()
+    right.nullable = True
+
+    to_schema = relations_pb2.Relation()
+    to_schema.to_schema.input.CopyFrom(local)
+    to_schema.to_schema.schema.CopyFrom(schema)
+
+    unpivoted = relations_pb2.Relation()
+    unpivoted.unpivot.input.CopyFrom(to_schema)
+    unpivoted.unpivot.ids.append(_attribute(expressions_pb2, "category"))
+    unpivoted.unpivot.values.values.extend(
+        [
+            _attribute(expressions_pb2, "first"),
+            _attribute(expressions_pb2, "second"),
+        ]
+    )
+    unpivoted.unpivot.variable_column_name = "metric"
+    unpivoted.unpivot.value_column_name = "amount"
+
+    responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, unpivoted, ["category", "metric"]),
+    )
+
+    arrow_responses = [response for response in responses if response.HasField("arrow_batch")]
+    batches = _decode_arrow_batches(arrow_responses)
+    assert batches[0].schema.field("amount").type == pa.int64()
+    assert _decode_arrow_tuples(arrow_responses, ["category", "metric", "amount"]) == [
+        ("a", "first", 1),
+        ("a", "second", 2),
+        ("b", "first", 3),
+        ("b", "second", 4),
+    ]
