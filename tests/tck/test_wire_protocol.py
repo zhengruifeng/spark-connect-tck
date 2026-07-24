@@ -108,6 +108,20 @@ def _long_literal(expressions: Any, value: int) -> Any:
     return expression
 
 
+def _long_literal_value(expressions: Any, value: int) -> Any:
+    """Build an integer literal value for relation fields that require one."""
+    literal = expressions.Expression.Literal()
+    literal.long = value
+    return literal
+
+
+def _string_literal_value(expressions: Any, value: str) -> Any:
+    """Build a string literal value for relation fields that require one."""
+    literal = expressions.Expression.Literal()
+    literal.string = value
+    return literal
+
+
 def _function(expressions: Any, name: str, *arguments: Any) -> Any:
     """Build a non-UDF unresolved function expression directly in protobuf."""
     expression = expressions.Expression()
@@ -118,9 +132,16 @@ def _function(expressions: Any, name: str, *arguments: Any) -> Any:
 
 def _alias(expressions: Any, expression: Any, name: str) -> Any:
     """Build an aliased expression directly in protobuf."""
-    alias = expressions.Expression()
-    alias.alias.expr.CopyFrom(expression)
-    alias.alias.name.append(name)
+    result = expressions.Expression()
+    result.alias.CopyFrom(_alias_value(expressions, expression, name))
+    return result
+
+
+def _alias_value(expressions: Any, expression: Any, name: str) -> Any:
+    """Build an alias value for relation fields that require an Alias message."""
+    alias = expressions.Expression.Alias()
+    alias.expr.CopyFrom(expression)
+    alias.name.append(name)
     return alias
 
 
@@ -131,6 +152,24 @@ def _range_relation(relations: Any, end: int, start: int = 0) -> Any:
     relation.range.end = end
     relation.range.step = 1
     relation.range.num_partitions = 1
+    return relation
+
+
+def _sorted_relation(
+    relations: Any, expressions: Any, input_relation: Any, columns: list[str]
+) -> Any:
+    """Sort a relation by named columns so result assertions do not rely on physical order."""
+    relation = relations.Relation()
+    relation.sort.input.CopyFrom(input_relation)
+    relation.sort.order.extend(
+        expressions.Expression.SortOrder(
+            child=_attribute(expressions, column),
+            direction=expressions.Expression.SortOrder.SORT_DIRECTION_ASCENDING,
+            null_ordering=expressions.Expression.SortOrder.SORT_NULLS_LAST,
+        )
+        for column in columns
+    )
+    relation.sort.is_global = True
     return relation
 
 
@@ -791,3 +830,177 @@ def test_tck_wire_014_conditional_and_cast_expressions_are_direct(
         (response for response in responses if response.HasField("arrow_batch")),
         ["id", "marked", "as_text"],
     ) == [(0, -1, "0"), (1, 100, "1"), (2, -1, "2")]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-015")
+def test_tck_wire_015_local_relation_and_na_relations_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Send Arrow-backed LocalRelation, fill, drop, and replace plans directly."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    table = pa.table(
+        {
+            "label": pa.array([None, "keep", None]),
+            "score": pa.array([None, 2, 2], type=pa.int64()),
+        }
+    )
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+
+    local = relations_pb2.Relation()
+    local.local_relation.data = sink.getvalue().to_pybytes()
+
+    filled = relations_pb2.Relation()
+    filled.fill_na.input.CopyFrom(local)
+    filled.fill_na.cols.extend(["label", "score"])
+    filled.fill_na.values.extend(
+        [
+            _string_literal_value(expressions_pb2, "missing"),
+            _long_literal_value(expressions_pb2, 0),
+        ]
+    )
+
+    replaced = relations_pb2.Relation()
+    replaced.replace.input.CopyFrom(filled)
+    replaced.replace.cols.append("label")
+    replacement = replaced.replace.replacements.add()
+    replacement.old_value.CopyFrom(_string_literal_value(expressions_pb2, "missing"))
+    replacement.new_value.CopyFrom(_string_literal_value(expressions_pb2, "replaced"))
+
+    dropped = relations_pb2.Relation()
+    dropped.drop_na.input.CopyFrom(local)
+    dropped.drop_na.cols.append("label")
+
+    filled_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, filled, ["label", "score"]),
+    )
+    replaced_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, replaced, ["label", "score"]),
+    )
+    dropped_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, dropped, ["label", "score"]),
+    )
+
+    assert _decode_arrow_tuples(
+        (response for response in filled_responses if response.HasField("arrow_batch")),
+        ["label", "score"],
+    ) == [("keep", 2), ("missing", 0), ("missing", 2)]
+    assert _decode_arrow_tuples(
+        (response for response in replaced_responses if response.HasField("arrow_batch")),
+        ["label", "score"],
+    ) == [("keep", 2), ("replaced", 0), ("replaced", 2)]
+    assert _decode_arrow_tuples(
+        (response for response in dropped_responses if response.HasField("arrow_batch")),
+        ["label", "score"],
+    ) == [("keep", 2)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-016")
+def test_tck_wire_016_column_mutation_and_deduplication_relations_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Send WithColumns, rename, drop, and deduplication plans directly."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    table = pa.table(
+        {
+            "label": pa.array(["a", "a", "a", "b"]),
+            "score": pa.array([1, 1, 3, 2], type=pa.int64()),
+        }
+    )
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+
+    local = relations_pb2.Relation()
+    local.local_relation.data = sink.getvalue().to_pybytes()
+
+    with_columns = relations_pb2.Relation()
+    with_columns.with_columns.input.CopyFrom(local)
+    with_columns.with_columns.aliases.extend(
+        [
+            _alias_value(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "+",
+                    _attribute(expressions_pb2, "score"),
+                    _long_literal(expressions_pb2, 10),
+                ),
+                "score",
+            ),
+            _alias_value(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "*",
+                    _attribute(expressions_pb2, "score"),
+                    _long_literal(expressions_pb2, 2),
+                ),
+                "double_score",
+            ),
+        ]
+    )
+
+    renamed = relations_pb2.Relation()
+    renamed.with_columns_renamed.input.CopyFrom(with_columns)
+    label_rename = renamed.with_columns_renamed.renames.add()
+    label_rename.col_name = "label"
+    label_rename.new_col_name = "kind"
+    score_rename = renamed.with_columns_renamed.renames.add()
+    score_rename.col_name = "score"
+    score_rename.new_col_name = "score_plus"
+
+    dropped = relations_pb2.Relation()
+    dropped.drop.input.CopyFrom(renamed)
+    dropped.drop.column_names.append("double_score")
+
+    deduplicated_by_name = relations_pb2.Relation()
+    deduplicated_by_name.deduplicate.input.CopyFrom(dropped)
+    deduplicated_by_name.deduplicate.column_names.append("kind")
+
+    deduplicated_by_row = relations_pb2.Relation()
+    deduplicated_by_row.deduplicate.input.CopyFrom(renamed)
+    deduplicated_by_row.deduplicate.all_columns_as_keys = True
+
+    dropped_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, dropped, ["kind", "score_plus"]),
+    )
+    by_name_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, deduplicated_by_name, ["kind"]),
+    )
+    by_row_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(
+            relations_pb2,
+            expressions_pb2,
+            deduplicated_by_row,
+            ["kind", "score_plus"],
+        ),
+    )
+
+    assert _decode_arrow_tuples(
+        (response for response in dropped_responses if response.HasField("arrow_batch")),
+        ["kind", "score_plus"],
+    ) == [("a", 11), ("a", 11), ("a", 13), ("b", 12)]
+    rows_by_name = _decode_arrow_tuples(
+        (response for response in by_name_responses if response.HasField("arrow_batch")),
+        ["kind", "score_plus"],
+    )
+    assert len(rows_by_name) == 2
+    assert {kind for kind, _ in rows_by_name} == {"a", "b"}
+    assert _decode_arrow_tuples(
+        (response for response in by_row_responses if response.HasField("arrow_batch")),
+        ["kind", "score_plus", "double_score"],
+    ) == [("a", 11, 2), ("a", 13, 6), ("b", 12, 4)]
