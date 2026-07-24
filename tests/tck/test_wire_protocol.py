@@ -124,10 +124,10 @@ def _alias(expressions: Any, expression: Any, name: str) -> Any:
     return alias
 
 
-def _range_relation(relations: Any, end: int) -> Any:
+def _range_relation(relations: Any, end: int, start: int = 0) -> Any:
     """Build a Range relation that can be nested in a larger raw plan."""
     relation = relations.Relation()
-    relation.range.start = 0
+    relation.range.start = start
     relation.range.end = end
     relation.range.step = 1
     relation.range.num_partitions = 1
@@ -638,3 +638,156 @@ def test_tck_wire_011_basic_aggregate_expressions_are_direct(
         (response for response in responses if response.HasField("arrow_batch")),
         ["bucket", "total"],
     ) == [(0, 6), (1, 9)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-012")
+def test_tck_wire_012_join_and_set_operations_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Build Join and SetOperation relation messages without DataFrame APIs."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    joined = relations_pb2.Relation()
+    joined.join.left.CopyFrom(_range_relation(relations_pb2, end=3))
+    joined.join.right.CopyFrom(_range_relation(relations_pb2, start=1, end=4))
+    joined.join.using_columns.append("id")
+    joined.join.join_type = relations_pb2.Join.JOIN_TYPE_INNER
+
+    sorted_join = relations_pb2.Relation()
+    sorted_join.sort.input.CopyFrom(joined)
+    sorted_join.sort.order.append(
+        expressions_pb2.Expression.SortOrder(
+            child=_attribute(expressions_pb2, "id"),
+            direction=expressions_pb2.Expression.SortOrder.SORT_DIRECTION_ASCENDING,
+            null_ordering=expressions_pb2.Expression.SortOrder.SORT_NULLS_LAST,
+        )
+    )
+    sorted_join.sort.is_global = True
+
+    unioned = relations_pb2.Relation()
+    unioned.set_op.left_input.CopyFrom(_range_relation(relations_pb2, end=3))
+    unioned.set_op.right_input.CopyFrom(_range_relation(relations_pb2, start=2, end=5))
+    unioned.set_op.set_op_type = relations_pb2.SetOperation.SET_OP_TYPE_UNION
+    unioned.set_op.is_all = False
+
+    sorted_union = relations_pb2.Relation()
+    sorted_union.sort.input.CopyFrom(unioned)
+    sorted_union.sort.order.append(
+        expressions_pb2.Expression.SortOrder(
+            child=_attribute(expressions_pb2, "id"),
+            direction=expressions_pb2.Expression.SortOrder.SORT_DIRECTION_ASCENDING,
+            null_ordering=expressions_pb2.Expression.SortOrder.SORT_NULLS_LAST,
+        )
+    )
+    sorted_union.sort.is_global = True
+
+    join_responses = _execute_relation(raw_spark_connect, sorted_join)
+    union_responses = _execute_relation(raw_spark_connect, sorted_union)
+
+    assert _decode_arrow_rows(
+        response for response in join_responses if response.HasField("arrow_batch")
+    ) == [1, 2]
+    assert _decode_arrow_rows(
+        response for response in union_responses if response.HasField("arrow_batch")
+    ) == [0, 1, 2, 3, 4]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-013")
+def test_tck_wire_013_offset_and_tail_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Build ordered Offset and Tail relation messages without DataFrame APIs."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    sorted_range = relations_pb2.Relation()
+    sorted_range.sort.input.CopyFrom(_range_relation(relations_pb2, end=6))
+    sorted_range.sort.order.append(
+        expressions_pb2.Expression.SortOrder(
+            child=_attribute(expressions_pb2, "id"),
+            direction=expressions_pb2.Expression.SortOrder.SORT_DIRECTION_ASCENDING,
+            null_ordering=expressions_pb2.Expression.SortOrder.SORT_NULLS_LAST,
+        )
+    )
+    sorted_range.sort.is_global = True
+
+    offset = relations_pb2.Relation()
+    offset.offset.input.CopyFrom(sorted_range)
+    offset.offset.offset = 2
+
+    tail = relations_pb2.Relation()
+    tail.tail.input.CopyFrom(offset)
+    tail.tail.limit = 2
+
+    responses = _execute_relation(raw_spark_connect, tail)
+
+    assert _decode_arrow_rows(
+        response for response in responses if response.HasField("arrow_batch")
+    ) == [4, 5]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-014")
+def test_tck_wire_014_conditional_and_cast_expressions_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Build boolean, conditional, and cast expressions without Column APIs."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    filtered = relations_pb2.Relation()
+    filtered.filter.input.CopyFrom(_range_relation(relations_pb2, end=3))
+    filtered.filter.condition.CopyFrom(
+        _function(
+            expressions_pb2,
+            "and",
+            _function(
+                expressions_pb2,
+                ">=",
+                _attribute(expressions_pb2, "id"),
+                _long_literal(expressions_pb2, 0),
+            ),
+            _function(
+                expressions_pb2,
+                "<",
+                _attribute(expressions_pb2, "id"),
+                _long_literal(expressions_pb2, 3),
+            ),
+        )
+    )
+
+    cast_to_string = expressions_pb2.Expression()
+    cast_to_string.cast.expr.CopyFrom(_attribute(expressions_pb2, "id"))
+    cast_to_string.cast.type_str = "STRING"
+
+    projected = relations_pb2.Relation()
+    projected.project.input.CopyFrom(filtered)
+    projected.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "id"),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "when",
+                    _function(
+                        expressions_pb2,
+                        "==",
+                        _attribute(expressions_pb2, "id"),
+                        _long_literal(expressions_pb2, 1),
+                    ),
+                    _long_literal(expressions_pb2, 100),
+                    _long_literal(expressions_pb2, -1),
+                ),
+                "marked",
+            ),
+            _alias(expressions_pb2, cast_to_string, "as_text"),
+        ]
+    )
+
+    responses = _execute_relation(raw_spark_connect, projected)
+
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        ["id", "marked", "as_text"],
+    ) == [(0, -1, "0"), (1, 100, "1"), (2, -1, "2")]

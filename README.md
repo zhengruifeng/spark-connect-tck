@@ -33,6 +33,9 @@ test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-009` | Wire protocol | A direct `CloneSession` request copies configuration into the clone. |
 | `TCK-WIRE-010` | Relations/expressions | A direct Range/Filter/Project/Sort/Limit plan returns its expected rows. |
 | `TCK-WIRE-011` | Relations/expressions | A direct Range/Project/Aggregate/Sort plan returns grouped totals. |
+| `TCK-WIRE-012` | Relations/expressions | Direct Join and SetOperation plans preserve their expected row sets. |
+| `TCK-WIRE-013` | Relations/expressions | A direct ordered Offset/Tail plan returns its final rows. |
+| `TCK-WIRE-014` | Relations/expressions | Direct boolean, conditional, and cast expressions retain typed values. |
 | `TCK-SESSION-001` | Sessions | Runtime configuration and temporary views are session-isolated. |
 | `TCK-CONFIG-001` | Configuration | `spark.sql.session.timeZone` is settable, readable, and observable. |
 | `TCK-CONFIG-002` | Configuration | SQL `SET`/`RESET` and `RuntimeConfig` share session state. |
