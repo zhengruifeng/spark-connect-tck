@@ -42,7 +42,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
-        "tck_case(case_id): trace a TCK test to a registered SC-1.0-P1 starter case",
+        "tck_case(case_id): trace a core TCK test to a registered SC-1.0-P1 draft case",
     )
 
 
@@ -92,7 +92,9 @@ def spark(spark_connect_url: str) -> Iterator[SparkSession]:
 @pytest.fixture
 def isolated_spark(spark: SparkSession) -> Iterator[SparkSession]:
     """Return a short-lived independent session for stateful conformance cases."""
-    session = spark.newSession()
+    session = spark.cloneSession()
+    # Spark 4.2 cloneSession bypasses __init__ and omits this stop() attribute.
+    session.release_session_on_close = True
     try:
         yield session
     finally:

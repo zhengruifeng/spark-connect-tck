@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.8"
+SPECIFICATION_VERSION = "1.0 draft v0.13"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,25 +19,22 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The Spark Connect 4.2 service request inventory.  These are the RPCs that a
-# required-profile wire implementation must expose; extension RPCs are out of
-# scope until they appear in the specification manifest.
+# The v0.13 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
-        "AddArtifacts",
         "AnalyzePlan",
-        "ArtifactStatus",
         "CloneSession",
         "Config",
         "ExecutePlan",
         "FetchErrorDetails",
         "GetStatus",
         "Interrupt",
-        "ReattachExecute",
-        "ReleaseExecute",
         "ReleaseSession",
     }
 )
+OPTIONAL_WIRE_RPCS = frozenset({"ReattachExecute", "ReleaseExecute"})
+DEFERRED_WIRE_RPCS = frozenset({"AddArtifacts", "ArtifactStatus"})
 
 
 @dataclass(frozen=True)
@@ -64,17 +61,6 @@ class TckCase:
 
 CASES = (
     TckCase(
-        "TCK-ANALYZE-001",
-        "Required AnalyzePlan operations expose schema and relation properties.",
-        "SC-1.0-P1-WIRE",
-        (
-            "AnalyzePlan / Schema",
-            "AnalyzePlan / IsLocal",
-            "AnalyzePlan / IsStreaming",
-            "AnalyzePlan / InputFiles",
-        ),
-    ),
-    TckCase(
         "TCK-WIRE-001",
         "A direct ExecutePlan protobuf Range request returns typed Arrow results.",
         "SC-1.0-P1-WIRE",
@@ -83,24 +69,38 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "A direct AnalyzePlan protobuf Schema request returns the Range schema.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.13.",
         "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / AnalyzePlan", "AnalyzePlan / Schema", "Relations / Range"),
+        (
+            "gRPC RPCs / AnalyzePlan",
+            "AnalyzePlan / Schema",
+            "AnalyzePlan / Explain",
+            "AnalyzePlan / TreeString",
+            "AnalyzePlan / IsLocal",
+            "AnalyzePlan / IsStreaming",
+            "AnalyzePlan / InputFiles",
+            "AnalyzePlan / SparkVersion",
+            "AnalyzePlan / DDLParse",
+            "Relations / Range",
+        ),
         ("AnalyzePlan",),
     ),
     TckCase(
         "TCK-WIRE-003",
-        "Direct Config Set and Get protobuf requests preserve session state.",
+        "Direct requests exercise every Config operation in one session.",
         "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / Config", "Configuration / spark.sql.session.timeZone"),
+        (
+            "gRPC RPCs / Config",
+            "Configuration / Set",
+            "Configuration / Get",
+            "Configuration / GetWithDefault",
+            "Configuration / GetOption",
+            "Configuration / GetAll",
+            "Configuration / Unset",
+            "Configuration / IsModifiable",
+            "Configuration / spark.sql.session.timeZone",
+        ),
         ("Config",),
-    ),
-    TckCase(
-        "TCK-WIRE-004",
-        "Direct artifact upload and status protobuf requests round-trip a session artifact.",
-        "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / AddArtifacts", "gRPC RPCs / ArtifactStatus"),
-        ("AddArtifacts", "ArtifactStatus"),
     ),
     TckCase(
         "TCK-WIRE-005",
@@ -108,13 +108,6 @@ CASES = (
         "SC-1.0-P1-WIRE",
         ("gRPC RPCs / Interrupt", "gRPC RPCs / GetStatus"),
         ("Interrupt", "GetStatus"),
-    ),
-    TckCase(
-        "TCK-WIRE-006",
-        "A reattachable execution can be reattached to and explicitly released.",
-        "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / ReattachExecute", "gRPC RPCs / ReleaseExecute"),
-        ("ReattachExecute", "ReleaseExecute"),
     ),
     TckCase(
         "TCK-WIRE-007",
@@ -210,6 +203,7 @@ CASES = (
             "Expressions / Literal",
             "Expressions / UnresolvedAttribute",
             "Expressions / UnresolvedFunction",
+            "Expressions / ExpressionString",
             "Expressions / Alias",
             "Expressions / Cast",
         ),
@@ -283,113 +277,86 @@ CASES = (
         ("ExecutePlan",),
     ),
     TckCase(
-        "TCK-EXEC-001",
-        "Empty tabular execution preserves its schema and completes successfully.",
+        "TCK-WIRE-020",
+        "Direct hint and transpose relation plans preserve their deterministic results.",
         "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / ExecutePlan", "Result delivery / Arrow IPC batches"),
-    ),
-    TckCase(
-        "TCK-EXEC-002",
-        "SQL named parameters are bound as typed expressions rather than text.",
-        "SC-1.0-P1-WIRE",
-        ("Commands / SqlCommand", "Execution / SQL execution"),
-    ),
-    TckCase(
-        "TCK-SESSION-001",
-        "Session configuration and temporary views are isolated between sessions.",
-        "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / CloneSession", "Configuration", "Catalog relations"),
-    ),
-    TckCase(
-        "TCK-CONFIG-001",
-        "The portable session time-zone key is settable, readable, and observable.",
-        "SC-1.0-P1-WIRE",
-        ("Configuration / spark.sql.session.timeZone",),
-    ),
-    TckCase(
-        "TCK-CONFIG-002",
-        "SQL SET and RESET share session state with RuntimeConfig.",
-        "SC-1.0-P1-SQL",
-        ("SQL-CONFIG",),
-    ),
-    TckCase(
-        "TCK-CATALOG-001",
-        "A session temporary view is queryable, listed, and removable.",
-        "SC-1.0-P1-WIRE",
-        ("Catalog relations / ListTables", "Catalog relations / DropTempView"),
-    ),
-    TckCase(
-        "TCK-CATALOG-002",
-        "Current database and database listings use the session catalog state.",
-        "SC-1.0-P1-WIRE",
-        ("Catalog relations / CurrentDatabase", "Catalog relations / ListDatabases"),
-    ),
-    TckCase(
-        "TCK-REL-001",
-        "Range, filter, projection, aggregation, ordering, and collection preserve rows.",
-        "SC-1.0-P1-WIRE",
-        ("Relations / Range", "Relations / Filter", "Relations / Project", "Relations / Aggregate"),
-    ),
-    TckCase(
-        "TCK-REL-002",
-        "Join and set-operation relations preserve the expected row set.",
-        "SC-1.0-P1-WIRE",
-        ("Relations / Join", "Relations / SetOperation", "Relations / Sort"),
-    ),
-    TckCase(
-        "TCK-REL-003",
-        "NA fill, drop, and replace preserve Spark null and type semantics.",
-        "SC-1.0-P1-WIRE",
-        ("Relations / NAFill", "Relations / NADrop", "Relations / NAReplace"),
-    ),
-    TckCase(
-        "TCK-TYPE-001",
-        "Required scalar and complex SQL types are preserved in result schemas and values.",
-        "SC-1.0-P1-WIRE",
-        ("Data types", "Result delivery / schema", "Result delivery / Arrow IPC batches"),
-    ),
-    TckCase(
-        "TCK-TYPE-002",
-        "Null, empty strings, empty arrays, and null array elements remain distinct.",
-        "SC-1.0-P1-WIRE",
-        ("Data types / Null", "Data types / String", "Data types / Array"),
-    ),
-    TckCase(
-        "TCK-TYPE-003",
-        "Double values preserve NaN, infinities, and signed zero.",
-        "SC-1.0-P1-WIRE",
-        ("Data types / Float", "Data types / Double"),
-    ),
-    TckCase(
-        "TCK-SQL-001",
-        "Core CTE, VALUES, set, ordering, and limit SQL forms produce deterministic rows.",
-        "SC-1.0-P1-SQL",
         (
-            "SQL-QRY-WITH",
-            "SQL-QRY-VALUES",
-            "SQL-QRY-SELECT",
-            "SQL-QRY-SET",
-            "SQL-QRY-ORDER",
-            "SQL-QRY-LIMIT",
+            "Relations / Hint",
+            "Relations / Transpose",
+            "Relations / LocalRelation",
+            "Relations / Range",
+            "Expressions / Literal",
+            "Expressions / UnresolvedAttribute",
         ),
+        ("ExecutePlan",),
     ),
     TckCase(
-        "TCK-SQL-002",
-        "INTERSECT and EXCEPT ALL follow the required set-operation semantics.",
-        "SC-1.0-P1-SQL",
-        ("SQL-QRY-SET", "SQL-QRY-ORDER"),
-    ),
-    TckCase(
-        "TCK-SQL-003",
-        "SELECT supports joins, grouping, and HAVING over required expressions.",
-        "SC-1.0-P1-SQL",
-        ("SQL-QRY-SELECT",),
-    ),
-    TckCase(
-        "TCK-PRESENTATION-001",
-        "DataFrame.show renders the required ShowString table output.",
+        "TCK-WIRE-021",
+        "Direct statistics relations return exact summary, correlation, quantile, and sample data.",
         "SC-1.0-P1-WIRE",
-        ("Relations / ShowString",),
+        (
+            "Relations / Project",
+            "Relations / Sort",
+            "Relations / StatSummary",
+            "Relations / StatCov",
+            "Relations / StatCorr",
+            "Relations / StatApproxQuantile",
+            "Relations / StatSampleBy",
+            "Expressions / Literal",
+            "Expressions / UnresolvedAttribute",
+            "Expressions / UnresolvedFunction",
+            "Expressions / Alias",
+            "Expressions / SortOrder",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-WIRE-022",
+        "A direct view command, named-table read, and catalog relations share session state.",
+        "SC-1.0-P1-WIRE",
+        (
+            "Commands / CreateDataFrameViewCommand",
+            "Relations / Read",
+            "Relations / Range",
+            "Catalog relations / TableExists",
+            "Catalog relations / ListColumns",
+            "Catalog relations / DropTempView",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-WIRE-024",
+        "Direct scalar and transform expressions cover the closed v0.13 function kernel.",
+        "SC-1.0-P1-FUNCTIONS",
+        (
+            "Functions / abs",
+            "Functions / coalesce",
+            "Functions / nullif",
+            "Functions / lower",
+            "Functions / upper",
+            "Functions / length",
+            "Functions / substring",
+            "Functions / substr",
+            "Functions / concat",
+            "Functions / trim",
+            "Functions / transform",
+            "Expressions / LambdaFunction",
+            "Expressions / UnresolvedNamedLambdaVariable",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-WIRE-025",
+        "Direct Parse, star, and framed-window plans preserve structured results.",
+        "SC-1.0-P1-WIRE",
+        (
+            "Relations / Parse",
+            "Expressions / UnresolvedStar",
+            "Expressions / Window",
+            "Expressions / SortOrder",
+            "Functions / sum",
+        ),
+        ("ExecutePlan",),
     ),
 )
 

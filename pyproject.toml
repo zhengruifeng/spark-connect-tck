@@ -35,6 +35,7 @@ Documentation = "https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzM
 addopts = "-ra"
 testpaths = ["tests"]
 markers = [
+    "optional_profile: compatibility probes that do not contribute to SC-1.0-P1 conformance",
     "smoke: small, deterministic cases suitable for fast target validation",
     "tck: Spark Connect compatibility cases that require a remote target",
     "tck_case(case_id): trace a TCK case to its registered SC-1.0-P1 requirements",

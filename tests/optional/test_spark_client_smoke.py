@@ -1,4 +1,10 @@
-"""Starter conformance cases selected from the SC-1.0-P1 required profile."""
+"""Reference-client smoke checks outside the draft v0.13 core TCK.
+
+These checks intentionally exercise Spark SQL 4.2 and presentation behavior.
+They are useful compatibility probes, but the v0.13 specification assigns SQL
+statement semantics to a separate dialect profile and excludes presentation
+relations from SC-1.0-P1.
+"""
 
 from __future__ import annotations
 
@@ -12,13 +18,12 @@ if TYPE_CHECKING:
     from pyspark.sql.connect.session import SparkSession
 
 
-pytestmark = pytest.mark.tck
+pytestmark = pytest.mark.optional_profile
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-ANALYZE-001")
-def test_tck_analyze_001_required_relation_analysis(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE AnalyzePlan: required relation properties are available."""
+def test_legacy_analyze_required_relation_analysis(spark: SparkSession) -> None:
+    """PySpark exposes basic relation-analysis properties."""
     result = spark.range(2)
 
     assert result.schema.fieldNames() == ["id"]
@@ -29,9 +34,8 @@ def test_tck_analyze_001_required_relation_analysis(spark: SparkSession) -> None
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-EXEC-001")
-def test_tck_exec_001_empty_result_preserves_schema(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE ExecutePlan: zero rows are a successful typed result."""
+def test_legacy_empty_result_preserves_schema(spark: SparkSession) -> None:
+    """Spark SQL 4.2 returns a typed zero-row result."""
     result = spark.sql("SELECT CAST(1 AS INT) AS value WHERE FALSE")
 
     assert result.schema.fieldNames() == ["value"]
@@ -40,9 +44,8 @@ def test_tck_exec_001_empty_result_preserves_schema(spark: SparkSession) -> None
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-EXEC-002")
-def test_tck_exec_002_sql_named_parameters_are_typed(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE SqlCommand: named values bind as typed expressions."""
+def test_legacy_sql_named_parameters_are_typed(spark: SparkSession) -> None:
+    """Spark SQL 4.2 named values bind as typed expressions."""
     row = spark.sql(
         "SELECT :number + 1 AS incremented, :label AS label",
         args={"number": 7, "label": "connect"},
@@ -52,11 +55,13 @@ def test_tck_exec_002_sql_named_parameters_are_typed(spark: SparkSession) -> Non
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-SESSION-001")
-def test_tck_session_001_sessions_isolate_config_and_temp_views(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE: session-scoped state cannot leak to another session."""
-    first = spark.newSession()
-    second = spark.newSession()
+def test_legacy_sessions_isolate_config_and_temp_views(spark: SparkSession) -> None:
+    """PySpark session-scoped state does not leak to another session."""
+    first = spark.cloneSession()
+    second = spark.cloneSession()
+    # Spark 4.2 cloneSession bypasses __init__ and omits this stop() attribute.
+    first.release_session_on_close = True
+    second.release_session_on_close = True
     view_name = f"spark_connect_tck_{uuid4().hex}"
     try:
         first.conf.set("spark.sql.session.timeZone", "UTC")
@@ -77,11 +82,10 @@ def test_tck_session_001_sessions_isolate_config_and_temp_views(spark: SparkSess
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-CONFIG-001")
-def test_tck_config_001_time_zone_is_set_read_and_observed(
+def test_legacy_time_zone_is_set_read_and_observed(
     isolated_spark: SparkSession,
 ) -> None:
-    """SC-1.0-P1-WIRE Config: session time-zone changes affect later SQL."""
+    """A PySpark session time-zone change affects later Spark SQL."""
     key = "spark.sql.session.timeZone"
     original_value = isolated_spark.conf.get(key)
     try:
@@ -93,11 +97,10 @@ def test_tck_config_001_time_zone_is_set_read_and_observed(
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-CONFIG-002")
-def test_tck_config_002_sql_set_and_reset_share_runtime_config(
+def test_legacy_sql_set_and_reset_share_runtime_config(
     isolated_spark: SparkSession,
 ) -> None:
-    """SC-1.0-P1-SQL SQL-CONFIG: SQL changes are visible through RuntimeConfig."""
+    """Spark SQL 4.2 SET and RESET changes are visible through RuntimeConfig."""
     key = "spark.sql.session.timeZone"
     original_value = isolated_spark.conf.get(key)
     try:
@@ -113,9 +116,8 @@ def test_tck_config_002_sql_set_and_reset_share_runtime_config(
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-CATALOG-001")
-def test_tck_catalog_001_temporary_view_lifecycle(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE Catalog: temporary views are queryable, listed, and removable."""
+def test_legacy_temporary_view_lifecycle(spark: SparkSession) -> None:
+    """PySpark temporary views are queryable, listed, and removable."""
     view_name = f"spark_connect_tck_{uuid4().hex}"
     spark.range(5).createOrReplaceTempView(view_name)
     try:
@@ -129,9 +131,8 @@ def test_tck_catalog_001_temporary_view_lifecycle(spark: SparkSession) -> None:
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-CATALOG-002")
-def test_tck_catalog_002_current_database_is_listed(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE Catalog: the current database appears in visible databases."""
+def test_legacy_current_database_is_listed(spark: SparkSession) -> None:
+    """The PySpark current database appears in visible databases."""
     current_database = spark.catalog.currentDatabase()
     databases = spark.catalog.listDatabases()
 
@@ -140,9 +141,8 @@ def test_tck_catalog_002_current_database_is_listed(spark: SparkSession) -> None
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-REL-001")
-def test_tck_rel_001_dataframe_relations_preserve_schema_and_rows(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE Relations: standard DataFrame plans preserve their result."""
+def test_legacy_dataframe_relations_preserve_schema_and_rows(spark: SparkSession) -> None:
+    """PySpark DataFrame plans preserve their expected result."""
     result = (
         spark.range(10)
         .where("id % 2 = 0")
@@ -159,9 +159,8 @@ def test_tck_rel_001_dataframe_relations_preserve_schema_and_rows(spark: SparkSe
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-REL-002")
-def test_tck_rel_002_joins_and_set_operations_preserve_rows(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE Relations: joins and set operations retain their semantics."""
+def test_legacy_joins_and_set_operations_preserve_rows(spark: SparkSession) -> None:
+    """PySpark joins and set operations retain their expected semantics."""
     left = spark.range(3).selectExpr("id", "concat('left-', id) AS label")
     right = spark.range(1, 4).selectExpr("id", "id * 10 AS amount")
     joined = left.join(right, on="id").orderBy("id")
@@ -175,9 +174,8 @@ def test_tck_rel_002_joins_and_set_operations_preserve_rows(spark: SparkSession)
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-REL-003")
-def test_tck_rel_003_na_relations_preserve_null_semantics(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE Relations: NA fill, drop, and replace are deterministic."""
+def test_legacy_na_relations_preserve_null_semantics(spark: SparkSession) -> None:
+    """PySpark NA fill, drop, and replace are deterministic."""
     source = spark.sql(
         """
         SELECT CAST(NULL AS STRING) AS label, CAST(NULL AS INT) AS score
@@ -201,9 +199,8 @@ def test_tck_rel_003_na_relations_preserve_null_semantics(spark: SparkSession) -
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-TYPE-001")
-def test_tck_type_001_required_sql_types_round_trip(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE Data types: required types retain their logical schemas."""
+def test_legacy_sql_types_round_trip(spark: SparkSession) -> None:
+    """Spark SQL 4.2 types retain their logical schemas."""
     result = spark.sql(
         """
         SELECT
@@ -261,9 +258,8 @@ def test_tck_type_001_required_sql_types_round_trip(spark: SparkSession) -> None
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-TYPE-002")
-def test_tck_type_002_null_and_empty_values_remain_distinct(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE Data types: null and empty are never silently conflated."""
+def test_legacy_null_and_empty_values_remain_distinct(spark: SparkSession) -> None:
+    """Spark SQL 4.2 keeps null and empty values distinct."""
     row = spark.sql(
         """
         SELECT
@@ -281,9 +277,8 @@ def test_tck_type_002_null_and_empty_values_remain_distinct(spark: SparkSession)
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-TYPE-003")
-def test_tck_type_003_floating_point_special_values(spark: SparkSession) -> None:
-    """SC-1.0-P1-WIRE Data types: IEEE 754 special values round-trip."""
+def test_legacy_floating_point_special_values(spark: SparkSession) -> None:
+    """Spark SQL 4.2 IEEE 754 special values round-trip."""
     import math
 
     row = spark.sql(
@@ -303,9 +298,8 @@ def test_tck_type_003_floating_point_special_values(spark: SparkSession) -> None
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-SQL-001")
-def test_tck_sql_001_required_query_productions(spark: SparkSession) -> None:
-    """SC-1.0-P1-SQL: CTE, VALUES, UNION ALL, ORDER BY, and LIMIT interoperate."""
+def test_legacy_sql_query_productions(spark: SparkSession) -> None:
+    """Spark SQL 4.2 CTE, VALUES, UNION ALL, ORDER BY, and LIMIT interoperate."""
     rows = spark.sql(
         """
         WITH values_cte(value) AS (VALUES (3), (1), (2))
@@ -321,9 +315,8 @@ def test_tck_sql_001_required_query_productions(spark: SparkSession) -> None:
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-SQL-002")
-def test_tck_sql_002_intersect_and_except_all(spark: SparkSession) -> None:
-    """SC-1.0-P1-SQL SQL-QRY-SET: intersection and multiset difference are required."""
+def test_legacy_sql_intersect_and_except_all(spark: SparkSession) -> None:
+    """Spark SQL 4.2 intersection and multiset difference semantics interoperate."""
     intersected = spark.sql(
         """
         SELECT value FROM VALUES (1), (2) AS left_values(value)
@@ -346,9 +339,8 @@ def test_tck_sql_002_intersect_and_except_all(spark: SparkSession) -> None:
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-SQL-003")
-def test_tck_sql_003_join_group_and_having(spark: SparkSession) -> None:
-    """SC-1.0-P1-SQL SQL-QRY-SELECT: joins, grouping, and HAVING interoperate."""
+def test_legacy_sql_join_group_and_having(spark: SparkSession) -> None:
+    """Spark SQL 4.2 joins, grouping, and HAVING interoperate."""
     rows = spark.sql(
         """
         SELECT left_values.category, sum(right_values.amount) AS total
@@ -365,12 +357,11 @@ def test_tck_sql_003_join_group_and_having(spark: SparkSession) -> None:
 
 
 @pytest.mark.smoke
-@pytest.mark.tck_case("TCK-PRESENTATION-001")
-def test_tck_presentation_001_show_renders_table(
+def test_legacy_show_renders_table(
     spark: SparkSession,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """SC-1.0-P1-WIRE ShowString: the default table rendering is exact."""
+    """The optional Spark 4.2 default table rendering is exact."""
     spark.range(2).show()
 
     assert capsys.readouterr().out == "+---+\n| id|\n+---+\n|  0|\n|  1|\n+---+\n\n"

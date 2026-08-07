@@ -1,51 +1,66 @@
 # Design traceability
 
-The source design is the Spark Connect TCK document:
+The source design is the Spark Connect specification document:
 
 <https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz>
 
 ## Current implementation status
 
-The source document is accessible to the TCK environment. Its v0.8 draft
-defines `SC-1.0-P1` as the sole normative required-profile manifest, pinned to
-Apache Spark 4.2.0 at commit
-`32f7299601108917fb01920a54e084595b7b3bf8`. The profile combines wire,
-client, provider, function, and SQL sub-manifests. A passing target must pass
-the complete required profile; per-area results are diagnostic only.
+The source document is working draft v0.13, updated 2026-08-07. It defines
+`SC-1.0-P1` as the sole required profile and pins the reference implementation
+to Apache Spark 4.2.0 at commit
+`32f7299601108917fb01920a54e084595b7b3bf8`.
 
-This repository contains an executable slice of the wire and SQL
-sub-manifests. Its cases are registered in `spark_connect_tck.spec`, where
-each one records its `SC-1.0-P1` manifest and rows. Pytest collection rejects
-any live-target test that is not registered there. The direct-wire registry
-also maps each baseline service RPC to at least one test, and a unit test fails
-if that request inventory is incomplete.
+The v0.13 scope differs materially from the earlier v0.8 draft. The required
+RPCs are `ExecutePlan`, `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`,
+`FetchErrorDetails`, `CloneSession`, and `GetStatus`. Reattachment RPCs are
+optional, artifact RPCs are deferred, presentation relations are excluded, and
+SQL statement semantics belong to separately declared dialect profiles.
 
-The starter slice covers:
+Final profile membership will be controlled by
+`docs/spark-connect/spec/manifests/sc-1.0-p1.json` at an immutable Apache Spark
+publication commit. That bundle, its commit, and its whole-file SHA-256 are not
+published yet. The references in `spark_connect_tck.spec` therefore identify
+draft sections rather than final canonical row IDs. This repository cannot be
+a conformance release until those pins exist and every test cites them.
 
-1. `ExecutePlan` user-visible zero-row completion and schema preservation.
-2. Required `AnalyzePlan` schema, local, streaming, and input-files operations.
-3. Typed named SQL parameters.
-4. Session isolation for runtime configuration and temporary views.
-5. RuntimeConfig and SQL `SET`/`RESET` time-zone behavior.
-6. Temporary-view lifecycle and visible current-database metadata.
-7. Selected required Range, Filter, Project, Aggregate, Sort, Join,
-   SetOperation, NAFill, NADrop, and NAReplace relations.
-8. Required scalar, temporal, complex, null, empty-value, and IEEE 754
-   special-value behavior.
-9. Selected `SQL-QRY-*` rows: WITH, VALUES, SELECT, set operations, joins,
-   grouping, HAVING, ordering, and limit.
-10. Default `ShowString` rendering through the public `DataFrame.show()` API.
+The current core slice constructs protobuf requests directly and covers:
 
-This is not a conformance release. In particular, it does not yet implement
-the linked `SC-1.0-P1-CLIENT` overload manifest, the exhaustive function and
-provider manifests, all raw gRPC error-envelope variants, authorization
-harness, full catalog/configuration coverage, or the complete
-relation/expression/command matrix.
+1. All eight required service RPCs.
+2. All eight required `AnalyzePlan` operations: Schema, Explain, TreeString,
+   IsLocal, IsStreaming, InputFiles, SparkVersion, and DDLParse.
+3. All seven `Config` operations and required time-zone key behavior.
+4. Range, LocalRelation, Project, Filter, Sort, Limit, Aggregate, Join,
+   SetOperation, Offset, Tail, NA, column-shape, deduplication, repartitioning,
+   Sample, ToSchema, Unpivot, Hint, Transpose, Read, Parse, and selected Catalog
+   relations.
+5. CreateDataFrameViewCommand with named-table and Catalog visibility.
+6. Direct Arrow result decoding, schema checks, and response identity checks.
+7. Required aggregate functions and the v0.13 scalar kernel, including a
+   worker-free `transform` lambda.
+8. Direct ExpressionString CASE, cast, star, and framed-window expressions.
+9. Summary, covariance, correlation, exact quantile, and stratified-sample
+   statistical relations.
+
+Historical PySpark and Spark SQL 4.2 checks live under `tests/optional`. They
+remain useful implementation probes but do not contribute to an SC-1.0-P1
+result.
+
+This is still a starter slice. Major missing areas include the canonical
+client overload rows, providers and writes, the remaining relation and
+expression variants and field-domain branches, full function and
+ExpressionString corpora, cast modes, Arrow mappings, structured error
+envelopes, authorization, configuration-key effects, complete Catalog
+operations/result schemas, and positive/negative command coverage.
 
 ## Test contract
 
-Each test case must have a stable `TCK-<AREA>-<NUMBER>` identifier, a concise
-normative contract, an `SC-1.0-P1` manifest, and at least one exact manifest
-row. Cases use the public PySpark Connect API where it exposes the specified
-wire behavior. Cases must not assume that the target has a local filesystem, a
-particular catalog, or Databricks-specific SQL extensions.
+Each core case has a stable `TCK-<AREA>-<NUMBER>` identifier, a concise
+contract, an `SC-1.0-P1` member, and at least one draft reference. Core relation
+and expression cases construct protobuf plans directly. Tests must not require
+a shared client/server filesystem, a particular catalog implementation, Spark
+SQL statement grammar, presentation formatting, or vendor-specific extensions.
+
+Once the canonical v0.13 bundle is published, draft references must be replaced
+with exact row IDs and the repository must record the bundle publication
+commit, path, and whole-file digest.

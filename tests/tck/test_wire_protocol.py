@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
-from zlib import crc32
 
 import pytest
 
@@ -108,6 +107,20 @@ def _long_literal(expressions: Any, value: int) -> Any:
     return expression
 
 
+def _int_literal(expressions: Any, value: int) -> Any:
+    """Build a 32-bit integer literal expression without using a Column client."""
+    expression = expressions.Expression()
+    expression.literal.integer = value
+    return expression
+
+
+def _string_literal(expressions: Any, value: str) -> Any:
+    """Build a string literal expression without using a Column client."""
+    expression = expressions.Expression()
+    expression.literal.string = value
+    return expression
+
+
 def _long_literal_value(expressions: Any, value: int) -> Any:
     """Build an integer literal value for relation fields that require one."""
     literal = expressions.Expression.Literal()
@@ -155,6 +168,19 @@ def _range_relation(relations: Any, end: int, start: int = 0) -> Any:
     return relation
 
 
+def _local_relation(relations: Any, table: Any) -> Any:
+    """Encode an Arrow table as a LocalRelation without a DataFrame client."""
+    import pyarrow as pa
+
+    sink = pa.BufferOutputStream()
+    with pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+
+    relation = relations.Relation()
+    relation.local_relation.data = sink.getvalue().to_pybytes()
+    return relation
+
+
 def _sorted_relation(
     relations: Any, expressions: Any, input_relation: Any, columns: list[str]
 ) -> Any:
@@ -191,6 +217,24 @@ def _execute_relation(raw_spark_connect: RawSparkConnectSession, relation: Any) 
     return responses
 
 
+def _execute_command(raw_spark_connect: RawSparkConnectSession, command: Any) -> list[Any]:
+    """Execute one direct Command plan and return the complete response stream."""
+    proto = raw_spark_connect.proto
+    operation_id = str(uuid4())
+    request = proto.ExecutePlanRequest(
+        session_id=raw_spark_connect.session_id,
+        user_context=raw_spark_connect.user_context,
+        operation_id=operation_id,
+        client_type="spark-connect-tck",
+        plan=proto.Plan(command=command),
+    )
+    responses = list(raw_spark_connect.stub.ExecutePlan(request, timeout=30))
+
+    if responses:
+        _assert_response_identity(responses, raw_spark_connect.session_id, operation_id)
+    return responses
+
+
 def _get_time_zone(raw_spark_connect: RawSparkConnectSession) -> Any:
     """Create the raw session, returning its Config response and server-side ID."""
     proto = raw_spark_connect.proto
@@ -214,35 +258,6 @@ def _assert_unary_response_identity(
     assert response.session_id == raw_spark_connect.session_id
     assert response.server_side_session_id
     UUID(response.server_side_session_id)
-
-
-def _execute_reattachable_range(
-    raw_spark_connect: RawSparkConnectSession,
-) -> tuple[str, list[Any]]:
-    """Start and consume a reattachable Range operation through the raw stub."""
-    proto = raw_spark_connect.proto
-    operation_id = str(uuid4())
-    request = proto.ExecutePlanRequest(
-        session_id=raw_spark_connect.session_id,
-        user_context=raw_spark_connect.user_context,
-        operation_id=operation_id,
-        client_type="spark-connect-tck",
-        plan=_range_plan(proto),
-        request_options=[
-            proto.ExecutePlanRequest.RequestOption(
-                reattach_options=proto.ReattachOptions(reattachable=True)
-            )
-        ],
-    )
-    responses = list(raw_spark_connect.stub.ExecutePlan(request, timeout=30))
-
-    assert responses
-    _assert_response_identity(responses, raw_spark_connect.session_id, operation_id)
-    assert any(response.HasField("result_complete") for response in responses)
-    assert _decode_arrow_rows(
-        response for response in responses if response.HasField("arrow_batch")
-    ) == [0, 1]
-    return operation_id, responses
 
 
 @pytest.mark.smoke
@@ -281,39 +296,84 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 
 @pytest.mark.smoke
 @pytest.mark.tck_case("TCK-WIRE-002")
-def test_tck_wire_002_analyze_plan_schema_is_direct(
+def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """AnalyzePlan receives a hand-built Schema request and returns a Struct schema."""
+    """Exercise every AnalyzePlan operation required by the v0.13 wire profile."""
     proto = raw_spark_connect.proto
-    request = proto.AnalyzePlanRequest(
+    request_fields = (
+        "schema",
+        "explain",
+        "tree_string",
+        "is_local",
+        "is_streaming",
+        "input_files",
+    )
+    requests: dict[str, Any] = {}
+    for field in request_fields:
+        request = proto.AnalyzePlanRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+        )
+        getattr(request, field).plan.CopyFrom(_range_plan(proto))
+        requests[field] = request
+    requests["explain"].explain.explain_mode = proto.AnalyzePlanRequest.Explain.EXPLAIN_MODE_SIMPLE
+
+    requests["spark_version"] = proto.AnalyzePlanRequest(
         session_id=raw_spark_connect.session_id,
         user_context=raw_spark_connect.user_context,
         client_type="spark-connect-tck",
+        spark_version=proto.AnalyzePlanRequest.SparkVersion(),
     )
-    request.schema.plan.CopyFrom(_range_plan(proto))
+    requests["ddl_parse"] = proto.AnalyzePlanRequest(
+        session_id=raw_spark_connect.session_id,
+        user_context=raw_spark_connect.user_context,
+        client_type="spark-connect-tck",
+        ddl_parse=proto.AnalyzePlanRequest.DDLParse(ddl_string="id BIGINT"),
+    )
 
-    response = raw_spark_connect.stub.AnalyzePlan(request, timeout=30)
+    responses = {
+        field: raw_spark_connect.stub.AnalyzePlan(request, timeout=30)
+        for field, request in requests.items()
+    }
+    server_session_ids = set()
+    for field, response in responses.items():
+        assert response.session_id == raw_spark_connect.session_id
+        assert response.server_side_session_id
+        UUID(response.server_side_session_id)
+        server_session_ids.add(response.server_side_session_id)
+        assert response.WhichOneof("result") == field
+    assert len(server_session_ids) == 1
 
-    assert response.session_id == raw_spark_connect.session_id
-    assert response.server_side_session_id
-    UUID(response.server_side_session_id)
-    assert response.WhichOneof("result") == "schema"
-    schema = response.schema.schema
+    schema = responses["schema"].schema.schema
     assert schema.WhichOneof("kind") == "struct"
     assert [(field.name, field.data_type.WhichOneof("kind")) for field in schema.struct.fields] == [
+        ("id", "long")
+    ]
+    assert responses["explain"].explain.explain_string
+    assert responses["tree_string"].tree_string.tree_string
+    assert not responses["is_local"].is_local.is_local
+    assert not responses["is_streaming"].is_streaming.is_streaming
+    assert list(responses["input_files"].input_files.files) == []
+    assert responses["spark_version"].spark_version.version
+
+    parsed = responses["ddl_parse"].ddl_parse.parsed
+    assert parsed.WhichOneof("kind") == "struct"
+    assert [(field.name, field.data_type.WhichOneof("kind")) for field in parsed.struct.fields] == [
         ("id", "long")
     ]
 
 
 @pytest.mark.smoke
 @pytest.mark.tck_case("TCK-WIRE-003")
-def test_tck_wire_003_config_set_and_get_share_the_raw_session(
+def test_tck_wire_003_required_config_operations_share_the_raw_session(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Config uses direct Set and Get requests against the same protocol session."""
+    """Exercise Set, Get, default, option, listing, mutability, and Unset directly."""
     proto = raw_spark_connect.proto
     key = "spark.sql.session.timeZone"
+    missing_key = f"spark.connect.tck.missing.{uuid4().hex}"
     set_request = proto.ConfigRequest(
         session_id=raw_spark_connect.session_id,
         user_context=raw_spark_connect.user_context,
@@ -333,56 +393,63 @@ def test_tck_wire_003_config_set_and_get_share_the_raw_session(
     )
     get_response = raw_spark_connect.stub.Config(get_request, timeout=30)
 
-    for response in (set_response, get_response):
-        assert response.session_id == raw_spark_connect.session_id
-        assert response.server_side_session_id
-        UUID(response.server_side_session_id)
-    assert get_response.server_side_session_id == set_response.server_side_session_id
+    def config(operation: Any) -> Any:
+        return raw_spark_connect.stub.Config(
+            proto.ConfigRequest(
+                session_id=raw_spark_connect.session_id,
+                user_context=raw_spark_connect.user_context,
+                client_type="spark-connect-tck",
+                client_observed_server_side_session_id=set_response.server_side_session_id,
+                operation=operation,
+            ),
+            timeout=30,
+        )
+
+    default_response = config(
+        proto.ConfigRequest.Operation(
+            get_with_default=proto.ConfigRequest.GetWithDefault(
+                pairs=[proto.KeyValue(key=missing_key, value="fallback")]
+            )
+        )
+    )
+    option_response = config(
+        proto.ConfigRequest.Operation(get_option=proto.ConfigRequest.GetOption(keys=[missing_key]))
+    )
+    all_response = config(
+        proto.ConfigRequest.Operation(
+            get_all=proto.ConfigRequest.GetAll(prefix="spark.sql.session.")
+        )
+    )
+    modifiable_response = config(
+        proto.ConfigRequest.Operation(is_modifiable=proto.ConfigRequest.IsModifiable(keys=[key]))
+    )
+    unset_response = config(
+        proto.ConfigRequest.Operation(unset=proto.ConfigRequest.Unset(keys=[key]))
+    )
+
+    for response in (
+        set_response,
+        get_response,
+        default_response,
+        option_response,
+        all_response,
+        modifiable_response,
+        unset_response,
+    ):
+        _assert_unary_response_identity(response, raw_spark_connect)
+        assert response.server_side_session_id == set_response.server_side_session_id
+
+    assert set_response.pairs == []
     assert [(pair.key, pair.value) for pair in get_response.pairs] == [(key, "UTC")]
-
-
-@pytest.mark.smoke
-@pytest.mark.tck_case("TCK-WIRE-004")
-def test_tck_wire_004_artifact_upload_and_status_are_direct(
-    raw_spark_connect: RawSparkConnectSession,
-) -> None:
-    """AddArtifacts and ArtifactStatus send and verify a hand-built artifact request."""
-    proto = raw_spark_connect.proto
-    artifact_name = f"cache/{uuid4().hex}"
-    data = b"spark-connect-tck"
-    add_request = proto.AddArtifactsRequest(
-        session_id=raw_spark_connect.session_id,
-        user_context=raw_spark_connect.user_context,
-        client_type="spark-connect-tck",
-        batch=proto.AddArtifactsRequest.Batch(
-            artifacts=[
-                proto.AddArtifactsRequest.SingleChunkArtifact(
-                    name=artifact_name,
-                    data=proto.AddArtifactsRequest.ArtifactChunk(data=data, crc=crc32(data)),
-                )
-            ]
-        ),
-    )
-
-    add_response = raw_spark_connect.stub.AddArtifacts(iter([add_request]), timeout=30)
-    status_response = raw_spark_connect.stub.ArtifactStatus(
-        proto.ArtifactStatusesRequest(
-            session_id=raw_spark_connect.session_id,
-            user_context=raw_spark_connect.user_context,
-            client_type="spark-connect-tck",
-            client_observed_server_side_session_id=add_response.server_side_session_id,
-            names=[artifact_name],
-        ),
-        timeout=30,
-    )
-
-    _assert_unary_response_identity(add_response, raw_spark_connect)
-    _assert_unary_response_identity(status_response, raw_spark_connect)
-    assert add_response.server_side_session_id == status_response.server_side_session_id
-    assert [(artifact.name, artifact.is_crc_successful) for artifact in add_response.artifacts] == [
-        (artifact_name, True)
+    assert [(pair.key, pair.value) for pair in default_response.pairs] == [
+        (missing_key, "fallback")
     ]
-    assert status_response.statuses[artifact_name].exists
+    assert len(option_response.pairs) == 1
+    assert option_response.pairs[0].key == missing_key
+    assert not option_response.pairs[0].HasField("value")
+    assert ("timeZone", "UTC") in [(pair.key, pair.value) for pair in all_response.pairs]
+    assert [(pair.key, pair.value) for pair in modifiable_response.pairs] == [(key, "true")]
+    assert unset_response.pairs == []
 
 
 @pytest.mark.smoke
@@ -418,47 +485,6 @@ def test_tck_wire_005_interrupt_and_get_status_are_direct(
     _assert_unary_response_identity(status_response, raw_spark_connect)
     assert interrupt_response.interrupted_ids == []
     assert list(status_response.operation_statuses) == []
-
-
-@pytest.mark.smoke
-@pytest.mark.tck_case("TCK-WIRE-006")
-def test_tck_wire_006_reattach_and_release_execute_are_direct(
-    raw_spark_connect: RawSparkConnectSession,
-) -> None:
-    """ReattachExecute repeats buffered results and ReleaseExecute frees the operation."""
-    proto = raw_spark_connect.proto
-    operation_id, initial_responses = _execute_reattachable_range(raw_spark_connect)
-    reattach_responses = list(
-        raw_spark_connect.stub.ReattachExecute(
-            proto.ReattachExecuteRequest(
-                session_id=raw_spark_connect.session_id,
-                user_context=raw_spark_connect.user_context,
-                client_type="spark-connect-tck",
-                client_observed_server_side_session_id=initial_responses[-1].server_side_session_id,
-                operation_id=operation_id,
-            ),
-            timeout=30,
-        )
-    )
-    release_response = raw_spark_connect.stub.ReleaseExecute(
-        proto.ReleaseExecuteRequest(
-            session_id=raw_spark_connect.session_id,
-            user_context=raw_spark_connect.user_context,
-            client_type="spark-connect-tck",
-            client_observed_server_side_session_id=initial_responses[-1].server_side_session_id,
-            operation_id=operation_id,
-            release_all=proto.ReleaseExecuteRequest.ReleaseAll(),
-        ),
-        timeout=30,
-    )
-
-    assert reattach_responses
-    _assert_response_identity(reattach_responses, raw_spark_connect.session_id, operation_id)
-    assert _decode_arrow_rows(
-        response for response in reattach_responses if response.HasField("arrow_batch")
-    ) == [0, 1]
-    _assert_unary_response_identity(release_response, raw_spark_connect)
-    assert release_response.operation_id == operation_id
 
 
 @pytest.mark.smoke
@@ -654,8 +680,28 @@ def test_tck_wire_011_basic_aggregate_expressions_are_direct(
         [
             _alias(
                 expressions_pb2,
+                _function(expressions_pb2, "count", _attribute(expressions_pb2, "id")),
+                "count",
+            ),
+            _alias(
+                expressions_pb2,
                 _function(expressions_pb2, "sum", _attribute(expressions_pb2, "id")),
                 "total",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "avg", _attribute(expressions_pb2, "id")),
+                "average",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "min", _attribute(expressions_pb2, "id")),
+                "minimum",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "max", _attribute(expressions_pb2, "id")),
+                "maximum",
             ),
         ]
     )
@@ -675,8 +721,8 @@ def test_tck_wire_011_basic_aggregate_expressions_are_direct(
 
     assert _decode_arrow_tuples(
         (response for response in responses if response.HasField("arrow_batch")),
-        ["bucket", "total"],
-    ) == [(0, 6), (1, 9)]
+        ["bucket", "count", "total", "average", "minimum", "maximum"],
+    ) == [(0, 3, 6, 2.0, 0, 4), (1, 3, 9, 3.0, 1, 5)]
 
 
 @pytest.mark.smoke
@@ -799,6 +845,9 @@ def test_tck_wire_014_conditional_and_cast_expressions_are_direct(
     cast_to_string.cast.expr.CopyFrom(_attribute(expressions_pb2, "id"))
     cast_to_string.cast.type_str = "STRING"
 
+    conditional = expressions_pb2.Expression()
+    conditional.expression_string.expression = "CASE WHEN id = 1 THEN 100 ELSE -1 END"
+
     projected = relations_pb2.Relation()
     projected.project.input.CopyFrom(filtered)
     projected.project.expressions.extend(
@@ -806,18 +855,7 @@ def test_tck_wire_014_conditional_and_cast_expressions_are_direct(
             _attribute(expressions_pb2, "id"),
             _alias(
                 expressions_pb2,
-                _function(
-                    expressions_pb2,
-                    "when",
-                    _function(
-                        expressions_pb2,
-                        "==",
-                        _attribute(expressions_pb2, "id"),
-                        _long_literal(expressions_pb2, 1),
-                    ),
-                    _long_literal(expressions_pb2, 100),
-                    _long_literal(expressions_pb2, -1),
-                ),
+                conditional,
                 "marked",
             ),
             _alias(expressions_pb2, cast_to_string, "as_text"),
@@ -1120,3 +1158,415 @@ def test_tck_wire_018_to_schema_and_unpivot_relations_are_direct(
         ("b", "first", 3),
         ("b", "second", 4),
     ]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-020")
+def test_tck_wire_020_hint_and_transpose_relations_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Execute direct optimizer-hint and transpose relation messages."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    hinted = relations_pb2.Relation()
+    hinted.hint.input.CopyFrom(_range_relation(relations_pb2, end=4))
+    hinted.hint.name = "COALESCE"
+    hinted.hint.parameters.append(_int_literal(expressions_pb2, 1))
+
+    local = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "label": pa.array(["a", "b"]),
+                "first": pa.array([1, 3], type=pa.int64()),
+                "second": pa.array([2, 4], type=pa.int64()),
+            }
+        ),
+    )
+    transposed = relations_pb2.Relation()
+    transposed.transpose.input.CopyFrom(local)
+    transposed.transpose.index_columns.append(_attribute(expressions_pb2, "label"))
+
+    hint_responses = _execute_relation(raw_spark_connect, hinted)
+    transpose_responses = _execute_relation(raw_spark_connect, transposed)
+
+    assert _decode_arrow_rows(
+        response for response in hint_responses if response.HasField("arrow_batch")
+    ) == [0, 1, 2, 3]
+    assert _decode_arrow_tuples(
+        (response for response in transpose_responses if response.HasField("arrow_batch")),
+        ["key", "a", "b"],
+    ) == [("first", 1, 3), ("second", 2, 4)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-021")
+def test_tck_wire_021_statistics_relations_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Execute deterministic summary, correlation, quantile, and stratified-sample plans."""
+    import math
+
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    numeric = relations_pb2.Relation()
+    numeric.project.input.CopyFrom(_range_relation(relations_pb2, end=4))
+    numeric.project.expressions.extend(
+        [
+            _alias(expressions_pb2, _attribute(expressions_pb2, "id"), "value"),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "*",
+                    _attribute(expressions_pb2, "id"),
+                    _long_literal(expressions_pb2, 2),
+                ),
+                "doubled",
+            ),
+        ]
+    )
+
+    summary = relations_pb2.Relation()
+    summary.summary.input.CopyFrom(numeric)
+    summary.summary.statistics.extend(["count", "min", "max"])
+
+    covariance = relations_pb2.Relation()
+    covariance.cov.input.CopyFrom(numeric)
+    covariance.cov.col1 = "value"
+    covariance.cov.col2 = "doubled"
+
+    correlation = relations_pb2.Relation()
+    correlation.corr.input.CopyFrom(numeric)
+    correlation.corr.col1 = "value"
+    correlation.corr.col2 = "doubled"
+    correlation.corr.method = "pearson"
+
+    quantiles = relations_pb2.Relation()
+    quantiles.approx_quantile.input.CopyFrom(numeric)
+    quantiles.approx_quantile.cols.extend(["value", "doubled"])
+    quantiles.approx_quantile.probabilities.extend([0.0, 1.0])
+    quantiles.approx_quantile.relative_error = 0.0
+
+    sample = relations_pb2.Relation()
+    sample.sample_by.input.CopyFrom(numeric)
+    sample.sample_by.col.CopyFrom(_attribute(expressions_pb2, "value"))
+    sample.sample_by.seed = 17
+    for value in range(4):
+        fraction = sample.sample_by.fractions.add()
+        fraction.stratum.CopyFrom(_long_literal_value(expressions_pb2, value))
+        fraction.fraction = 1.0
+
+    summary_responses = _execute_relation(raw_spark_connect, summary)
+    covariance_responses = _execute_relation(raw_spark_connect, covariance)
+    correlation_responses = _execute_relation(raw_spark_connect, correlation)
+    quantile_responses = _execute_relation(raw_spark_connect, quantiles)
+    sample_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, sample, ["value"]),
+    )
+
+    assert _decode_arrow_tuples(
+        (response for response in summary_responses if response.HasField("arrow_batch")),
+        ["summary", "value", "doubled"],
+    ) == [("count", "4", "4"), ("min", "0", "0"), ("max", "3", "6")]
+    covariance_value = _decode_arrow_tuples(
+        (response for response in covariance_responses if response.HasField("arrow_batch")), ["cov"]
+    )[0][0]
+    correlation_value = _decode_arrow_tuples(
+        (response for response in correlation_responses if response.HasField("arrow_batch")),
+        ["corr"],
+    )[0][0]
+    assert math.isclose(covariance_value, 10 / 3)
+    assert math.isclose(correlation_value, 1.0)
+    assert _decode_arrow_tuples(
+        (response for response in quantile_responses if response.HasField("arrow_batch")),
+        ["approx_quantile"],
+    ) == [([[0.0, 3.0], [0.0, 6.0]],)]
+    assert _decode_arrow_tuples(
+        (response for response in sample_responses if response.HasField("arrow_batch")),
+        ["value", "doubled"],
+    ) == [(0, 0), (1, 2), (2, 4), (3, 6)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-022")
+def test_tck_wire_022_view_command_named_table_and_catalog_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Create, inspect, read, and remove one session temp view through direct protobuf plans."""
+    from pyspark.sql.connect.proto import commands_pb2, relations_pb2
+
+    view_name = f"spark_connect_tck_{uuid4().hex}"
+    create_view = commands_pb2.Command()
+    create_view.create_dataframe_view.input.CopyFrom(_range_relation(relations_pb2, end=3))
+    create_view.create_dataframe_view.name = view_name
+    create_view.create_dataframe_view.replace = True
+
+    view_created = False
+    try:
+        create_responses = _execute_command(raw_spark_connect, create_view)
+        view_created = True
+        assert not create_responses or any(
+            response.HasField("result_complete") for response in create_responses
+        )
+
+        exists = relations_pb2.Relation()
+        exists.catalog.table_exists.table_name = view_name
+        exists_responses = _execute_relation(raw_spark_connect, exists)
+        exists_batches = _decode_arrow_batches(
+            response for response in exists_responses if response.HasField("arrow_batch")
+        )
+        exists_values = [value for batch in exists_batches for value in batch.column(0).to_pylist()]
+        assert exists_values == [True]
+
+        columns = relations_pb2.Relation()
+        columns.catalog.list_columns.table_name = view_name
+        column_responses = _execute_relation(raw_spark_connect, columns)
+        column_batches = _decode_arrow_batches(
+            response for response in column_responses if response.HasField("arrow_batch")
+        )
+        column_names = {value for batch in column_batches for value in batch.column(0).to_pylist()}
+        assert column_names == {"id"}
+
+        named_table = relations_pb2.Relation()
+        named_table.read.named_table.unparsed_identifier = view_name
+        read_responses = _execute_relation(raw_spark_connect, named_table)
+        assert _decode_arrow_rows(
+            response for response in read_responses if response.HasField("arrow_batch")
+        ) == [0, 1, 2]
+    finally:
+        if view_created:
+            dropped = relations_pb2.Relation()
+            dropped.catalog.drop_temp_view.view_name = view_name
+            drop_responses = _execute_relation(raw_spark_connect, dropped)
+            drop_batches = _decode_arrow_batches(
+                response for response in drop_responses if response.HasField("arrow_batch")
+            )
+            assert [value for batch in drop_batches for value in batch.column(0).to_pylist()] == [
+                True
+            ]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-024")
+def test_tck_wire_024_required_scalar_and_lambda_functions_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Exercise the v0.13 scalar kernel and both lambda value/null handling directly."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    source = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "number": pa.array([-3], type=pa.int64()),
+                "missing": pa.array([None], type=pa.int64()),
+                "text": pa.array([" AbC "]),
+                "items": pa.array([[1, None, 3]], type=pa.list_(pa.int64())),
+            }
+        ),
+    )
+
+    variable = expressions_pb2.Expression.UnresolvedNamedLambdaVariable(name_parts=["x"])
+    variable_reference = expressions_pb2.Expression(unresolved_named_lambda_variable=variable)
+    lambda_function = expressions_pb2.Expression()
+    lambda_function.lambda_function.function.CopyFrom(
+        _function(
+            expressions_pb2,
+            "+",
+            _function(
+                expressions_pb2,
+                "coalesce",
+                variable_reference,
+                _long_literal(expressions_pb2, 0),
+            ),
+            _long_literal(expressions_pb2, 1),
+        )
+    )
+    lambda_function.lambda_function.arguments.append(variable)
+
+    projected = relations_pb2.Relation()
+    projected.project.input.CopyFrom(source)
+    projected.project.expressions.extend(
+        [
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "abs", _attribute(expressions_pb2, "number")),
+                "absolute",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "coalesce",
+                    _attribute(expressions_pb2, "missing"),
+                    _long_literal(expressions_pb2, 7),
+                ),
+                "coalesced",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "nullif",
+                    _attribute(expressions_pb2, "number"),
+                    _attribute(expressions_pb2, "number"),
+                ),
+                "nullified",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "lower", _attribute(expressions_pb2, "text")),
+                "lowered",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "upper", _attribute(expressions_pb2, "text")),
+                "uppered",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "length", _attribute(expressions_pb2, "text")),
+                "length",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "substring",
+                    _attribute(expressions_pb2, "text"),
+                    _long_literal(expressions_pb2, 2),
+                    _long_literal(expressions_pb2, 3),
+                ),
+                "substring",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "substr",
+                    _attribute(expressions_pb2, "text"),
+                    _long_literal(expressions_pb2, 2),
+                    _long_literal(expressions_pb2, 3),
+                ),
+                "substr",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "concat",
+                    _function(expressions_pb2, "trim", _attribute(expressions_pb2, "text")),
+                    _string_literal(expressions_pb2, "!"),
+                ),
+                "concatenated",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(
+                    expressions_pb2,
+                    "transform",
+                    _attribute(expressions_pb2, "items"),
+                    lambda_function,
+                ),
+                "transformed",
+            ),
+        ]
+    )
+
+    responses = _execute_relation(raw_spark_connect, projected)
+
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        [
+            "absolute",
+            "coalesced",
+            "nullified",
+            "lowered",
+            "uppered",
+            "length",
+            "substring",
+            "substr",
+            "concatenated",
+            "transformed",
+        ],
+    ) == [(3, 7, None, " abc ", " ABC ", 5, "AbC", "AbC", "AbC!", [2, 1, 4])]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-025")
+def test_tck_wire_025_parse_star_and_window_expressions_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Parse JSON and execute star and framed-window expressions through hand-built plans."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2, types_pb2
+
+    json_source = _local_relation(
+        relations_pb2,
+        pa.table({"value": pa.array(['{"id":1,"name":"a"}', '{"id":2,"name":"b"}'])}),
+    )
+    schema = types_pb2.DataType()
+    id_field = schema.struct.fields.add()
+    id_field.name = "id"
+    id_field.data_type.long.SetInParent()
+    id_field.nullable = True
+    name_field = schema.struct.fields.add()
+    name_field.name = "name"
+    name_field.data_type.string.SetInParent()
+    name_field.nullable = True
+
+    parsed = relations_pb2.Relation()
+    parsed.parse.input.CopyFrom(json_source)
+    parsed.parse.format = relations_pb2.Parse.PARSE_FORMAT_JSON
+    parsed.parse.schema.CopyFrom(schema)
+
+    star = expressions_pb2.Expression()
+    star.unresolved_star.SetInParent()
+    selected = relations_pb2.Relation()
+    selected.project.input.CopyFrom(parsed)
+    selected.project.expressions.append(star)
+
+    window = expressions_pb2.Expression()
+    window.window.window_function.CopyFrom(
+        _function(expressions_pb2, "sum", _attribute(expressions_pb2, "id"))
+    )
+    window.window.order_spec.append(
+        expressions_pb2.Expression.SortOrder(
+            child=_attribute(expressions_pb2, "id"),
+            direction=expressions_pb2.Expression.SortOrder.SORT_DIRECTION_ASCENDING,
+            null_ordering=expressions_pb2.Expression.SortOrder.SORT_NULLS_LAST,
+        )
+    )
+    window.window.frame_spec.frame_type = (
+        expressions_pb2.Expression.Window.WindowFrame.FRAME_TYPE_ROW
+    )
+    window.window.frame_spec.lower.unbounded = True
+    window.window.frame_spec.upper.current_row = True
+
+    running = relations_pb2.Relation()
+    running.project.input.CopyFrom(_range_relation(relations_pb2, end=4))
+    running.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "id"),
+            _alias(expressions_pb2, window, "running_total"),
+        ]
+    )
+
+    parsed_responses = _execute_relation(raw_spark_connect, selected)
+    window_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, running, ["id"]),
+    )
+
+    assert _decode_arrow_tuples(
+        (response for response in parsed_responses if response.HasField("arrow_batch")),
+        ["id", "name"],
+    ) == [(1, "a"), (2, "b")]
+    assert _decode_arrow_tuples(
+        (response for response in window_responses if response.HasField("arrow_batch")),
+        ["id", "running_total"],
+    ) == [(0, 0), (1, 1), (2, 3), (3, 6)]

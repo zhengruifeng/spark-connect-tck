@@ -1,74 +1,57 @@
 # Spark Connect TCK
 
 A Python implementation of a Technology Compatibility Kit (TCK) for Spark
-Connect servers. The suite exercises public PySpark Connect APIs and selected
-generated gRPC/protobuf requests against a separately running target server.
+Connect servers. Core cases construct generated gRPC/protobuf requests directly
+and run them against a separately managed target server.
 
 The intended implementation requirements are recorded in the [Spark Connect
 1.0 draft](https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz).
-This repository implements a deliberately small, traceable starter slice of
-its `SC-1.0-P1` required profile, pinned to Apache Spark 4.2.0. It is not yet a
-complete conformance suite and must not be used to make a Spark Connect 1.0
-compatibility claim.
+This repository tracks working draft v0.13 and implements a deliberately small,
+traceable slice of its `SC-1.0-P1` required profile, pinned to Apache Spark
+4.2.0. It is not a complete conformance suite and must not be used to make a
+Spark Connect 1.0 compatibility claim.
 
 ## Scope
 
-The initial suite establishes a small, portable baseline. Every live-target
-test is registered with its normative manifest and rows; collection fails if a
-test has no registered `TCK-<AREA>-<NUMBER>` reference.
+The core suite establishes a portable protocol-first baseline. Every core
+live-target test is registered with its draft manifest references; collection
+fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 
 | Case ID | Area | Behavior verified |
 | --- | --- | --- |
-| `TCK-EXEC-001` | Execution | A typed zero-row query completes successfully. |
-| `TCK-EXEC-002` | Execution | Named SQL parameters bind as typed expressions. |
-| `TCK-ANALYZE-001` | Analysis | Required relation schema and properties are available. |
 | `TCK-WIRE-001` | Wire protocol | A direct `ExecutePlan` Range request returns typed Arrow results. |
-| `TCK-WIRE-002` | Wire protocol | A direct `AnalyzePlan` Schema request returns the Range schema. |
-| `TCK-WIRE-003` | Wire protocol | Direct `Config` Set/Get requests preserve session state. |
-| `TCK-WIRE-004` | Wire protocol | Direct `AddArtifacts` and `ArtifactStatus` requests round-trip an artifact. |
+| `TCK-WIRE-002` | Wire protocol | Direct requests exercise all eight required `AnalyzePlan` operations. |
+| `TCK-WIRE-003` | Wire protocol | Direct requests exercise all seven `Config` operations. |
 | `TCK-WIRE-005` | Wire protocol | Direct `Interrupt` and `GetStatus` requests report an idle session. |
-| `TCK-WIRE-006` | Wire protocol | A reattachable request supports direct `ReattachExecute` and `ReleaseExecute`. |
 | `TCK-WIRE-007` | Wire protocol | A direct `ReleaseSession` request releases an established session. |
 | `TCK-WIRE-008` | Wire protocol | A direct `FetchErrorDetails` request returns the defined unknown-ID response. |
 | `TCK-WIRE-009` | Wire protocol | A direct `CloneSession` request copies configuration into the clone. |
 | `TCK-WIRE-010` | Relations/expressions | A direct Range/Filter/Project/Sort/Limit plan returns its expected rows. |
-| `TCK-WIRE-011` | Relations/expressions | A direct Range/Project/Aggregate/Sort plan returns grouped totals. |
+| `TCK-WIRE-011` | Relations/expressions | Direct aggregate plans cover count, sum, average, minimum, and maximum. |
 | `TCK-WIRE-012` | Relations/expressions | Direct Join and SetOperation plans preserve their expected row sets. |
 | `TCK-WIRE-013` | Relations/expressions | A direct ordered Offset/Tail plan returns its final rows. |
-| `TCK-WIRE-014` | Relations/expressions | Direct boolean, conditional, and cast expressions retain typed values. |
+| `TCK-WIRE-014` | Relations/expressions | Direct Boolean, ExpressionString CASE, and cast expressions retain typed values. |
 | `TCK-WIRE-015` | Relations/expressions | Direct Arrow-backed LocalRelation and NA plans preserve null semantics. |
 | `TCK-WIRE-016` | Relations/expressions | Direct column mutation and deduplication plans preserve rows and schemas. |
 | `TCK-WIRE-017` | Relations/expressions | Direct partitioning, aliasing, renaming, and sample plans preserve rows. |
 | `TCK-WIRE-018` | Relations/expressions | Direct schema replacement and unpivot plans preserve typed values. |
-| `TCK-SESSION-001` | Sessions | Runtime configuration and temporary views are session-isolated. |
-| `TCK-CONFIG-001` | Configuration | `spark.sql.session.timeZone` is settable, readable, and observable. |
-| `TCK-CONFIG-002` | Configuration | SQL `SET`/`RESET` and `RuntimeConfig` share session state. |
-| `TCK-CATALOG-001` | Catalog | A temporary view is queryable, listed, and removable. |
-| `TCK-CATALOG-002` | Catalog | The current database is visible through catalog metadata. |
-| `TCK-REL-001` | Relations | Range, filter, projection, aggregation, and ordering preserve results. |
-| `TCK-REL-002` | Relations | Joins and set operations preserve their rows. |
-| `TCK-REL-003` | Relations | NA fill, drop, and replace preserve null semantics. |
-| `TCK-TYPE-001` | Data types | Required primitive, temporal, and complex types preserve schemas and values. |
-| `TCK-TYPE-002` | Data types | Nulls, empty strings, empty arrays, and null elements stay distinct. |
-| `TCK-TYPE-003` | Data types | NaN, infinities, and signed zero round-trip. |
-| `TCK-SQL-001` | SQL | CTE, `VALUES`, `UNION ALL`, ordering, and limit forms interoperate. |
-| `TCK-SQL-002` | SQL | `INTERSECT` and `EXCEPT ALL` follow set semantics. |
-| `TCK-SQL-003` | SQL | Joins, grouping, and `HAVING` interoperate. |
-| `TCK-PRESENTATION-001` | Presentation | `DataFrame.show()` produces the required table rendering. |
+| `TCK-WIRE-020` | Relations/expressions | Direct hint and transpose plans preserve deterministic results. |
+| `TCK-WIRE-021` | Relations/expressions | Direct statistics plans return exact summary, correlation, quantile, and sample data. |
+| `TCK-WIRE-022` | Commands/catalog | Direct temp-view creation, named-table reads, and catalog relations share session state. |
+| `TCK-WIRE-024` | Functions/expressions | Direct plans cover the required scalar kernel and transform lambda binding. |
+| `TCK-WIRE-025` | Relations/expressions | Direct Parse, star, and framed-window plans preserve structured results. |
 
-Cases use public PySpark Connect APIs, SQL rows, and a small direct generated
-protobuf/gRPC slice in the draft's required profile. The wire cases construct
-their `Plan` and RPC requests themselves; they do not route those calls through
-`SparkSession`. The TCK does not start, configure, or manage the server being
-tested.
+The direct cases cover all v0.13 required service requests: `ExecutePlan`,
+`AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`, `FetchErrorDetails`,
+`CloneSession`, and `GetStatus`. A unit test enforces this mapping.
+`ReattachExecute` and `ReleaseExecute` are optional in v0.13; `AddArtifacts`
+and `ArtifactStatus` are deferred. Presentation relations and Spark SQL
+statement semantics are outside the core profile.
 
-The direct cases cover every request in the baseline Spark Connect service
-inventory: `ExecutePlan`, `AnalyzePlan`, `Config`, `AddArtifacts`,
-`ArtifactStatus`, `Interrupt`, `ReattachExecute`, `ReleaseExecute`,
-`ReleaseSession`, `FetchErrorDetails`, `CloneSession`, and `GetStatus`. A unit
-test enforces this inventory-to-case mapping. Each case verifies a successful
-or specified empty response; it does not make all optional request fields or
-extension messages mandatory.
+The draft's canonical JSON bundle, publication commit, and SHA-256 are not yet
+published. Case references are therefore section-level draft references rather
+than final canonical row IDs. This is an explicit release blocker, not a gap
+the TCK fills by inventing IDs.
 
 ## Run it
 
@@ -96,10 +79,18 @@ an in-process Spark session. Run only the quick baseline with:
 pytest -m smoke --spark-connect-url sc://localhost:15002
 ```
 
+Historical PySpark/Spark SQL 4.2 smoke checks are retained as non-conformance
+probes and can be run explicitly:
+
+```bash
+pytest tests/optional --spark-connect-url sc://localhost:15002
+```
+
 ## Adding a case
 
-1. Add a `TckCase` with a stable ID, `SC-1.0-P1` manifest, and exact manifest
-   rows in `src/spark_connect_tck/spec.py`.
+1. Add a `TckCase` with a stable ID, `SC-1.0-P1` manifest, and the narrowest
+   available draft references in `src/spark_connect_tck/spec.py`. Replace them
+   with canonical row IDs once the v0.13 bundle is published.
 2. Put the test in `tests/tck/`, mark it `tck_case("TCK-AREA-NNN")`, and add
    `smoke` only when it is deterministic and fast.
 3. Isolate all server state with a unique name and clean it up in `finally`.
