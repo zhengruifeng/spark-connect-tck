@@ -299,7 +299,7 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise every AnalyzePlan operation required by the v0.13 wire profile."""
+    """Exercise every AnalyzePlan operation required by the v0.14 wire profile."""
     proto = raw_spark_connect.proto
     request_fields = (
         "schema",
@@ -1354,7 +1354,7 @@ def test_tck_wire_022_view_command_named_table_and_catalog_are_direct(
 def test_tck_wire_024_required_scalar_and_lambda_functions_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.13 scalar kernel and both lambda value/null handling directly."""
+    """Exercise the v0.14 scalar kernel and both lambda value/null handling directly."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
@@ -1570,3 +1570,136 @@ def test_tck_wire_025_parse_star_and_window_expressions_are_direct(
         (response for response in window_responses if response.HasField("arrow_batch")),
         ["id", "running_total"],
     ) == [(0, 0), (1, 1), (2, 3), (3, 6)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-SQL-001")
+def test_tck_sql_001_portable_relation_sql_is_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Exercise the v0.14 Portable SQL Core through direct Relation.SQL plans."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    grouped = relations_pb2.Relation()
+    grouped.sql.query = """
+        SELECT left_values.category AS category,
+               count(*) AS row_count,
+               sum(right_values.amount) AS total,
+               avg(right_values.amount) AS average,
+               min(right_values.amount) AS minimum,
+               max(right_values.amount) AS maximum
+        FROM (VALUES (1, 'a'), (2, 'a'), (3, 'b')) AS left_values(id, category)
+        INNER JOIN (VALUES (1, 10), (2, 20), (3, 5)) AS right_values(id, amount)
+          ON left_values.id = right_values.id
+        WHERE right_values.amount >= :minimum_amount
+        GROUP BY left_values.category
+        HAVING sum(right_values.amount) >= 15
+        ORDER BY category ASC NULLS LAST
+        LIMIT 2 OFFSET 0
+    """
+    grouped.sql.named_arguments["minimum_amount"].CopyFrom(_long_literal(expressions_pb2, 5))
+
+    scalar = relations_pb2.Relation()
+    scalar.sql.query = """
+        SELECT DISTINCT values_table.value AS value,
+               upper(trim(values_table.label)) AS normalized,
+               length(values_table.label) AS original_length
+        FROM (
+          VALUES (?, ' a '), (?, ' a '), (CAST(NULL AS BIGINT), 'ignored')
+        ) AS values_table(value, label)
+        WHERE values_table.value IS NOT NULL
+        UNION ALL
+        SELECT CAST(abs(-3) AS BIGINT) AS value,
+               CASE WHEN nullif(lower('X'), 'x') IS NULL
+                    THEN substring(concat(' extra', ' '), 2, 5)
+                    ELSE coalesce(NULL, 'bad')
+               END AS normalized,
+               CAST(7 AS INTEGER) AS original_length
+        ORDER BY value ASC NULLS LAST
+        LIMIT 3 OFFSET 0
+    """
+    scalar.sql.pos_arguments.extend(
+        [_long_literal(expressions_pb2, 1), _long_literal(expressions_pb2, 2)]
+    )
+
+    left_join = relations_pb2.Relation()
+    left_join.sql.query = """
+        SELECT left_values.id AS id, right_values.label AS label
+        FROM (VALUES (1), (2)) AS left_values(id)
+        LEFT OUTER JOIN (VALUES (2, 'matched')) AS right_values(id, label)
+          ON left_values.id = right_values.id
+        ORDER BY id ASC NULLS LAST
+    """
+
+    cross_join = relations_pb2.Relation()
+    cross_join.sql.query = """
+        SELECT left_values.id AS left_id, right_values.id AS right_id
+        FROM (VALUES (1), (2)) AS left_values(id)
+        CROSS JOIN (VALUES (3), (4)) AS right_values(id)
+        ORDER BY left_id ASC NULLS LAST, right_id DESC NULLS LAST
+    """
+
+    grouped_responses = _execute_relation(raw_spark_connect, grouped)
+    scalar_responses = _execute_relation(raw_spark_connect, scalar)
+    left_join_responses = _execute_relation(raw_spark_connect, left_join)
+    cross_join_responses = _execute_relation(raw_spark_connect, cross_join)
+
+    assert _decode_arrow_tuples(
+        (response for response in grouped_responses if response.HasField("arrow_batch")),
+        ["category", "row_count", "total", "average", "minimum", "maximum"],
+    ) == [("a", 2, 30, 15.0, 10, 20)]
+    assert _decode_arrow_tuples(
+        (response for response in scalar_responses if response.HasField("arrow_batch")),
+        ["value", "normalized", "original_length"],
+    ) == [(1, "A", 3), (2, "A", 3), (3, "extra", 7)]
+    assert _decode_arrow_tuples(
+        (response for response in left_join_responses if response.HasField("arrow_batch")),
+        ["id", "label"],
+    ) == [(1, None), (2, "matched")]
+    assert _decode_arrow_tuples(
+        (response for response in cross_join_responses if response.HasField("arrow_batch")),
+        ["left_id", "right_id"],
+    ) == [(1, 4), (1, 3), (2, 4), (2, 3)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-SQL-002")
+def test_tck_sql_002_portable_sql_command_returns_relation(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Execute a portable query through SqlCommand.input, then execute its returned relation."""
+    from pyspark.sql.connect.proto import commands_pb2, expressions_pb2, relations_pb2
+
+    query = relations_pb2.Relation()
+    query.sql.query = "SELECT :value + 1 AS incremented"
+    query.sql.named_arguments["value"].CopyFrom(_long_literal(expressions_pb2, 7))
+
+    command = commands_pb2.Command()
+    command.sql_command.input.CopyFrom(query)
+    command_responses = _execute_command(raw_spark_connect, command)
+    command_results = [
+        response.sql_command_result
+        for response in command_responses
+        if response.HasField("sql_command_result")
+    ]
+
+    assert len(command_results) == 1
+    assert command_results[0].HasField("relation")
+
+    direct_responses = _execute_relation(raw_spark_connect, query)
+    returned_responses = _execute_relation(raw_spark_connect, command_results[0].relation)
+    expected = [(8,)]
+    assert (
+        _decode_arrow_tuples(
+            (response for response in direct_responses if response.HasField("arrow_batch")),
+            ["incremented"],
+        )
+        == expected
+    )
+    assert (
+        _decode_arrow_tuples(
+            (response for response in returned_responses if response.HasField("arrow_batch")),
+            ["incremented"],
+        )
+        == expected
+    )

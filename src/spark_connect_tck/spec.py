@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.13"
+SPECIFICATION_VERSION = "1.0 draft v0.14"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,7 +19,7 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The v0.13 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# The v0.14 SC-1.0-P1 service request inventory. Optional and deferred RPCs
 # intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
@@ -69,7 +69,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "Direct requests exercise every AnalyzePlan operation required by v0.13.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.14.",
         "SC-1.0-P1-WIRE",
         (
             "gRPC RPCs / AnalyzePlan",
@@ -326,7 +326,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-024",
-        "Direct scalar and transform expressions cover the closed v0.13 function kernel.",
+        "Direct scalar and transform expressions cover the closed v0.14 function kernel.",
         "SC-1.0-P1-FUNCTIONS",
         (
             "Functions / abs",
@@ -355,6 +355,41 @@ CASES = (
             "Expressions / Window",
             "Expressions / SortOrder",
             "Functions / sum",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-SQL-001",
+        "Direct Relation.SQL plans cover the Portable SQL Core query and parameter families.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "Relations / SQL",
+            "Appendix I.2 / Lexical elements",
+            "Appendix I.3 / SELECT",
+            "Appendix I.3 / VALUES",
+            "Appendix I.3 / Joins",
+            "Appendix I.3 / WHERE",
+            "Appendix I.3 / GROUP BY",
+            "Appendix I.3 / HAVING",
+            "Appendix I.3 / UNION ALL",
+            "Appendix I.3 / ORDER BY",
+            "Appendix I.3 / LIMIT and OFFSET",
+            "Appendix I.4 / Operators and functions",
+            "Appendix I.5 / Query semantics",
+            "Appendix I.6 / Named parameters",
+            "Appendix I.6 / Positional parameters",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-SQL-002",
+        "A portable query sent through SqlCommand returns an equivalent lazy relation.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "Commands / SqlCommand",
+            "Relations / SQL",
+            "Appendix I.6 / Named parameters",
+            "Appendix I.6 / SqlCommandResult.relation",
         ),
         ("ExecutePlan",),
     ),

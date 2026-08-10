@@ -6,7 +6,7 @@ and run them against a separately managed target server.
 
 The intended implementation requirements are recorded in the [Spark Connect
 1.0 draft](https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz).
-This repository tracks working draft v0.13 and implements a deliberately small,
+This repository tracks working draft v0.14 and implements a deliberately small,
 traceable slice of its `SC-1.0-P1` required profile, pinned to Apache Spark
 4.2.0. It is not a complete conformance suite and must not be used to make a
 Spark Connect 1.0 compatibility claim.
@@ -40,13 +40,16 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-022` | Commands/catalog | Direct temp-view creation, named-table reads, and catalog relations share session state. |
 | `TCK-WIRE-024` | Functions/expressions | Direct plans cover the required scalar kernel and transform lambda binding. |
 | `TCK-WIRE-025` | Relations/expressions | Direct Parse, star, and framed-window plans preserve structured results. |
+| `TCK-SQL-001` | Portable SQL | Direct `Relation.SQL` plans cover required queries, joins, clauses, functions, and typed parameters. |
+| `TCK-SQL-002` | Portable SQL | A direct `SqlCommand.input` returns an equivalent executable relation. |
 
-The direct cases cover all v0.13 required service requests: `ExecutePlan`,
+The direct cases cover all v0.14 required service requests: `ExecutePlan`,
 `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`, `FetchErrorDetails`,
 `CloneSession`, and `GetStatus`. A unit test enforces this mapping.
-`ReattachExecute` and `ReleaseExecute` are optional in v0.13; `AddArtifacts`
-and `ArtifactStatus` are deferred. Presentation relations and Spark SQL
-statement semantics are outside the core profile.
+`ReattachExecute` and `ReleaseExecute` are optional in v0.14; `AddArtifacts`
+and `ArtifactStatus` are deferred. Draft v0.14 adds a restricted Portable SQL
+Core to the required profile; complete Spark SQL semantics, DDL/DML, and
+presentation relations remain outside the core profile.
 
 The draft's canonical JSON bundle, publication commit, and SHA-256 are not yet
 published. Case references are therefore section-level draft references rather
@@ -90,7 +93,7 @@ pytest tests/optional --spark-connect-url sc://localhost:15002
 
 1. Add a `TckCase` with a stable ID, `SC-1.0-P1` manifest, and the narrowest
    available draft references in `src/spark_connect_tck/spec.py`. Replace them
-   with canonical row IDs once the v0.13 bundle is published.
+   with canonical row IDs once the v0.14 bundle is published.
 2. Put the test in `tests/tck/`, mark it `tck_case("TCK-AREA-NNN")`, and add
    `smoke` only when it is deterministic and fast.
 3. Isolate all server state with a unique name and clean it up in `finally`.
