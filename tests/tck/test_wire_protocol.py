@@ -93,6 +93,15 @@ def _decode_arrow_tuples(
     return rows
 
 
+def _result_schema(responses: Iterable[Any]) -> Any:
+    """Return the final logical result schema carried by an ExecutePlan stream."""
+    schemas = [response.schema for response in responses if response.HasField("schema")]
+    assert schemas
+    schema = schemas[-1]
+    assert schema.WhichOneof("kind") == "struct"
+    return schema.struct
+
+
 def _attribute(expressions: Any, name: str) -> Any:
     """Build an unresolved attribute expression without using a Column client."""
     expression = expressions.Expression()
@@ -299,7 +308,7 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise every AnalyzePlan operation required by the v0.14 wire profile."""
+    """Exercise every AnalyzePlan operation required by the v0.15 wire profile."""
     proto = raw_spark_connect.proto
     request_fields = (
         "schema",
@@ -1354,7 +1363,7 @@ def test_tck_wire_022_view_command_named_table_and_catalog_are_direct(
 def test_tck_wire_024_required_scalar_and_lambda_functions_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.14 scalar kernel and both lambda value/null handling directly."""
+    """Exercise the v0.15 scalar kernel and both lambda value/null handling directly."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
@@ -1577,7 +1586,7 @@ def test_tck_wire_025_parse_star_and_window_expressions_are_direct(
 def test_tck_sql_001_portable_relation_sql_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.14 Portable SQL Core through direct Relation.SQL plans."""
+    """Exercise the v0.15 Portable SQL Core through direct Relation.SQL plans."""
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
     grouped = relations_pb2.Relation()
@@ -1703,3 +1712,158 @@ def test_tck_sql_002_portable_sql_command_returns_relation(
         )
         == expected
     )
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-SQL-003")
+def test_tck_sql_003_portable_casts_have_exact_logical_types(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Assert the executable v0.15 aliases independently of bare VARCHAR."""
+    from decimal import Decimal
+
+    from pyspark.sql.connect.proto import relations_pb2
+
+    query = relations_pb2.Relation()
+    query.sql.query = """
+        SELECT CAST(TRUE AS BOOLEAN) AS boolean_value,
+               CAST(32767 AS SMALLINT) AS small_value,
+               CAST(2147483647 AS INTEGER) AS integer_value,
+               CAST(9223372036854775807 AS BIGINT) AS big_value,
+               CAST(1.25 AS REAL) AS real_value,
+               CAST(2.5 AS DOUBLE) AS double_value,
+               CAST(12.34 AS DECIMAL(4, 2)) AS decimal_value,
+               CAST('2024-01-02' AS DATE) AS date_value,
+               CAST('2024-01-02 03:04:05' AS TIMESTAMP) AS timestamp_value
+    """
+
+    responses = _execute_relation(raw_spark_connect, query)
+    schema = _result_schema(responses)
+    fields = {field.name: field.data_type for field in schema.fields}
+
+    assert {name: data_type.WhichOneof("kind") for name, data_type in fields.items()} == {
+        "boolean_value": "boolean",
+        "small_value": "short",
+        "integer_value": "integer",
+        "big_value": "long",
+        "real_value": "float",
+        "double_value": "double",
+        "decimal_value": "decimal",
+        "date_value": "date",
+        "timestamp_value": "timestamp",
+    }
+    assert (fields["decimal_value"].decimal.precision, fields["decimal_value"].decimal.scale) == (
+        4,
+        2,
+    )
+    rows = _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        list(fields),
+    )
+    assert len(rows) == 1
+    assert rows[0][:-2] == (
+        True,
+        32767,
+        2147483647,
+        9223372036854775807,
+        1.25,
+        2.5,
+        Decimal("12.34"),
+    )
+    assert rows[0][-2].isoformat() == "2024-01-02"
+    assert rows[0][-1].replace(tzinfo=None).isoformat() == "2024-01-02T03:04:05"
+
+
+@pytest.mark.smoke
+@pytest.mark.reference_gap
+@pytest.mark.tck_case("TCK-SQL-004")
+def test_tck_sql_004_bare_varchar_is_binary_string(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Require bare VARCHAR to produce String rather than optional VarChar or a parse error."""
+    from pyspark.sql.connect.proto import relations_pb2
+
+    query = relations_pb2.Relation()
+    query.sql.query = "SELECT CAST('connect' AS VARCHAR) AS varchar_value"
+    responses = _execute_relation(raw_spark_connect, query)
+    schema = _result_schema(responses)
+
+    assert len(schema.fields) == 1
+    varchar_type = schema.fields[0].data_type
+    assert varchar_type.WhichOneof("kind") == "string"
+    assert varchar_type.string.collation in ("", "UTF8_BINARY")
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        ["varchar_value"],
+    ) == [("connect",)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-SQL-005")
+@pytest.mark.parametrize(
+    ("session_zone", "timestamp_default", "expected_utc_hour"),
+    [
+        pytest.param(
+            "UTC",
+            "TIMESTAMP_NTZ",
+            3,
+            id="utc-ntz-default",
+            marks=pytest.mark.reference_gap,
+        ),
+        pytest.param("UTC", "TIMESTAMP_LTZ", 3, id="utc-ltz-default"),
+        pytest.param(
+            "America/Los_Angeles",
+            "TIMESTAMP_NTZ",
+            11,
+            id="los-angeles-ntz-default",
+            marks=pytest.mark.reference_gap,
+        ),
+        pytest.param("America/Los_Angeles", "TIMESTAMP_LTZ", 11, id="los-angeles-ltz-default"),
+    ],
+)
+def test_tck_sql_005_portable_timestamp_ignores_non_core_default(
+    raw_spark_connect: RawSparkConnectSession,
+    session_zone: str,
+    timestamp_default: str,
+    expected_utc_hour: int,
+) -> None:
+    """Keep TIMESTAMP zoned under UTC/non-UTC and both Spark timestamp defaults."""
+    from datetime import timezone
+
+    from pyspark.sql.connect.proto import relations_pb2
+
+    proto = raw_spark_connect.proto
+    config_response = raw_spark_connect.stub.Config(
+        proto.ConfigRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            operation=proto.ConfigRequest.Operation(
+                set=proto.ConfigRequest.Set(
+                    pairs=[
+                        proto.KeyValue(key="spark.sql.session.timeZone", value=session_zone),
+                        proto.KeyValue(key="spark.sql.timestampType", value=timestamp_default),
+                    ]
+                )
+            ),
+        ),
+        timeout=30,
+    )
+    _assert_unary_response_identity(config_response, raw_spark_connect)
+
+    query = relations_pb2.Relation()
+    query.sql.query = "SELECT CAST('2024-01-02 03:04:05.123456' AS TIMESTAMP) AS timestamp_value"
+    responses = _execute_relation(raw_spark_connect, query)
+    schema = _result_schema(responses)
+    assert len(schema.fields) == 1
+    assert schema.fields[0].data_type.WhichOneof("kind") == "timestamp"
+
+    batches = _decode_arrow_batches(
+        response for response in responses if response.HasField("arrow_batch")
+    )
+    assert len(batches) == 1
+    arrow_type = batches[0].schema.field("timestamp_value").type
+    assert arrow_type.tz == session_zone
+    value = batches[0].column("timestamp_value").to_pylist()[0]
+    assert value.replace(tzinfo=None).isoformat() == "2024-01-02T03:04:05.123456"
+    assert value.astimezone(timezone.utc).hour == expected_utc_hour

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.14"
+SPECIFICATION_VERSION = "1.0 draft v0.15"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,7 +19,7 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The v0.14 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# The v0.15 SC-1.0-P1 service request inventory. Optional and deferred RPCs
 # intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
@@ -69,7 +69,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "Direct requests exercise every AnalyzePlan operation required by v0.14.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.15.",
         "SC-1.0-P1-WIRE",
         (
             "gRPC RPCs / AnalyzePlan",
@@ -326,7 +326,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-024",
-        "Direct scalar and transform expressions cover the closed v0.14 function kernel.",
+        "Direct scalar and transform expressions cover the closed v0.15 function kernel.",
         "SC-1.0-P1-FUNCTIONS",
         (
             "Functions / abs",
@@ -392,6 +392,49 @@ CASES = (
             "Appendix I.6 / SqlCommandResult.relation",
         ),
         ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-SQL-003",
+        "Portable SQL casts produce exact scalar, decimal, date, and timestamp types.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "SQL-TYPE-BOOLEAN / CAST-SQL-BOOLEAN",
+            "SQL-TYPE-SMALLINT / CAST-SQL-SMALLINT",
+            "SQL-TYPE-INTEGER / CAST-SQL-INTEGER",
+            "SQL-TYPE-BIGINT / CAST-SQL-BIGINT",
+            "SQL-TYPE-REAL / CAST-SQL-REAL",
+            "SQL-TYPE-DOUBLE / CAST-SQL-DOUBLE",
+            "SQL-TYPE-DECIMAL / CAST-SQL-DECIMAL",
+            "SQL-TYPE-DATE / CAST-SQL-DATE",
+            "SQL-TYPE-TIMESTAMP / CAST-SQL-TIMESTAMP",
+            "Appendix I.4 / Portable type aliases",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-SQL-004",
+        "Portable SQL bare VARCHAR maps to an unbounded UTF8_BINARY String.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "SQL-TYPE-VARCHAR",
+            "CAST-SQL-VARCHAR",
+            "Appendix I.4 / VARCHAR is String with UTF8_BINARY",
+            "Appendix I.9 / bare VARCHAR coverage",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-SQL-005",
+        "Portable SQL TIMESTAMP remains Timestamp across time zones and timestamp defaults.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "SQL-TYPE-TIMESTAMP",
+            "CAST-SQL-TIMESTAMP",
+            "Configuration / spark.sql.session.timeZone",
+            "Appendix I.4 / TIMESTAMP independence from spark.sql.timestampType",
+            "Appendix I.9 / UTC and non-UTC TIMESTAMP coverage",
+        ),
+        ("Config", "ExecutePlan"),
     ),
 )
 

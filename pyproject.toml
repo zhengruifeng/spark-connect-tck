@@ -36,6 +36,7 @@ addopts = "-ra"
 testpaths = ["tests"]
 markers = [
     "optional_profile: compatibility probes that do not contribute to SC-1.0-P1 conformance",
+    "reference_gap: required draft behavior known not to pass the pinned Apache Spark server",
     "smoke: small, deterministic cases suitable for fast target validation",
     "tck: Spark Connect compatibility cases that require a remote target",
     "tck_case(case_id): trace a TCK case to its registered SC-1.0-P1 requirements",
