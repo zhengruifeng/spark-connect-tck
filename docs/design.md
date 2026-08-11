@@ -6,21 +6,23 @@ The source design is the Spark Connect specification document:
 
 ## Current implementation status
 
-The source document is working draft v0.15, updated 2026-08-10. It defines
+The source document is working draft v0.16, updated 2026-08-11. It defines
 `SC-1.0-P1` as the sole required profile and pins the reference implementation
 to Apache Spark 4.2.0 at commit
 `32f7299601108917fb01920a54e084595b7b3bf8`.
 
-The v0.15 scope differs materially from the earlier v0.8 draft. The required
+The v0.16 scope differs materially from the earlier v0.8 draft. The required
 RPCs are `ExecutePlan`, `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`,
 `FetchErrorDetails`, `CloneSession`, and `GetStatus`. Reattachment RPCs are
 optional, artifact RPCs are deferred, presentation relations are excluded, and
-complete SQL dialects remain optional. Unlike v0.13, v0.15 requires a small
+complete SQL dialects remain optional. Unlike v0.13, v0.16 requires a small
 Portable SQL Core for `SELECT` and `VALUES` queries through `Relation.SQL` and
 the query-returning `SqlCommand.input` path. Draft v0.15 fixes each portable
 type spelling to one logical type, including `REAL` as Float, bare `VARCHAR` as
 an unbounded `UTF8_BINARY` String, and `TIMESTAMP` as Timestamp independently of
-`spark.sql.timestampType`.
+`spark.sql.timestampType`. Draft v0.16 then fixes the complete precedence and
+associativity ladders for Portable SQL and `ExpressionString`; predicates are
+non-associative and cannot be chained.
 
 Final profile membership will be controlled by
 `docs/spark-connect/spec/manifests/sc-1.0-p1.json` at an immutable Apache Spark
@@ -41,7 +43,7 @@ The current core slice constructs protobuf requests directly and covers:
    relations.
 5. CreateDataFrameViewCommand with named-table and Catalog visibility.
 6. Direct Arrow result decoding, schema checks, and response identity checks.
-7. Required aggregate functions and the v0.15 scalar kernel, including a
+7. Required aggregate functions and the v0.16 scalar kernel, including a
    worker-free `transform` lambda.
 8. Direct ExpressionString CASE, cast, star, and framed-window expressions.
 9. Summary, covariance, correlation, exact quantile, and stratified-sample
@@ -49,8 +51,12 @@ The current core slice constructs protobuf requests directly and covers:
 10. A direct positive Portable SQL slice covering `SELECT`, `VALUES`, required
     joins and clauses, `UNION ALL`, scalar and aggregate functions, named and
     positional typed parameters, and `SqlCommandResult.relation`.
-11. Direct casts for every v0.15 Portable SQL type alias, including exact proto
+11. Direct casts for every Portable SQL type alias, including exact proto
     schemas, decimal parameters, string collation, and timestamp Arrow zones.
+12. Every v0.16 Portable SQL precedence row, left-associative subtraction and
+    division, and rejection of chained comparison and null-test predicates.
+13. The corresponding direct `ExpressionString` precedence rules, including
+    `==` and `<=>`, plus rejection of chained expression predicates.
 
 ## Known draft/reference gaps
 
@@ -61,7 +67,11 @@ The v0.15 type requirements reveal two mismatches in the pinned Apache Spark
 `CAST(... AS TIMESTAMP)` to `TimestampNTZ`. `TCK-SQL-004` and the affected
 `TCK-SQL-005` parameters remain active required cases and intentionally expose
 these discrepancies. They carry `reference_gap` only so the previously passing
-reference-compatible slice can still be selected explicitly.
+reference-compatible slice can still be selected explicitly. Draft v0.16 also
+requires unparenthesized predicate chains to fail. Spark 4.2.0 correctly rejects
+chained null tests but accepts chained `=` in Portable SQL and chained `==` or
+`<=>` in `ExpressionString`; only those three parameters carry
+`reference_gap`.
 
 Historical PySpark and Spark SQL 4.2 checks live under `tests/optional`. They
 remain useful implementation probes but do not contribute to an SC-1.0-P1
@@ -84,6 +94,6 @@ a shared client/server filesystem, a particular catalog implementation, a
 complete Spark SQL dialect, presentation formatting, or vendor-specific
 extensions.
 
-Once the canonical v0.15 bundle is published, draft references must be replaced
+Once the canonical v0.16 bundle is published, draft references must be replaced
 with exact row IDs and the repository must record the bundle publication
 commit, path, and whole-file digest.

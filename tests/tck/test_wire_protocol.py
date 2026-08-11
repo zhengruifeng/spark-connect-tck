@@ -130,6 +130,13 @@ def _string_literal(expressions: Any, value: str) -> Any:
     return expression
 
 
+def _expression_string(expressions: Any, text: str) -> Any:
+    """Build an ExpressionString node without using a Column expression parser."""
+    expression = expressions.Expression()
+    expression.expression_string.expression = text
+    return expression
+
+
 def _long_literal_value(expressions: Any, value: int) -> Any:
     """Build an integer literal value for relation fields that require one."""
     literal = expressions.Expression.Literal()
@@ -226,6 +233,17 @@ def _execute_relation(raw_spark_connect: RawSparkConnectSession, relation: Any) 
     return responses
 
 
+def _assert_relation_rejected(raw_spark_connect: RawSparkConnectSession, relation: Any) -> None:
+    """Require a direct relation to fail through the gRPC error transport."""
+    import grpc
+
+    with pytest.raises(grpc.RpcError) as caught:
+        _execute_relation(raw_spark_connect, relation)
+
+    assert caught.value.code() != grpc.StatusCode.OK
+    assert caught.value.details()
+
+
 def _execute_command(raw_spark_connect: RawSparkConnectSession, command: Any) -> list[Any]:
     """Execute one direct Command plan and return the complete response stream."""
     proto = raw_spark_connect.proto
@@ -308,7 +326,7 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise every AnalyzePlan operation required by the v0.15 wire profile."""
+    """Exercise every AnalyzePlan operation required by the v0.16 wire profile."""
     proto = raw_spark_connect.proto
     request_fields = (
         "schema",
@@ -1363,7 +1381,7 @@ def test_tck_wire_022_view_command_named_table_and_catalog_are_direct(
 def test_tck_wire_024_required_scalar_and_lambda_functions_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.15 scalar kernel and both lambda value/null handling directly."""
+    """Exercise the v0.16 scalar kernel and both lambda value/null handling directly."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
@@ -1586,7 +1604,7 @@ def test_tck_wire_025_parse_star_and_window_expressions_are_direct(
 def test_tck_sql_001_portable_relation_sql_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.15 Portable SQL Core through direct Relation.SQL plans."""
+    """Exercise the v0.16 Portable SQL Core through direct Relation.SQL plans."""
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
     grouped = relations_pb2.Relation()
@@ -1719,7 +1737,7 @@ def test_tck_sql_002_portable_sql_command_returns_relation(
 def test_tck_sql_003_portable_casts_have_exact_logical_types(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Assert the executable v0.15 aliases independently of bare VARCHAR."""
+    """Assert the portable aliases independently of bare VARCHAR."""
     from decimal import Decimal
 
     from pyspark.sql.connect.proto import relations_pb2
@@ -1867,3 +1885,125 @@ def test_tck_sql_005_portable_timestamp_ignores_non_core_default(
     value = batches[0].column("timestamp_value").to_pylist()[0]
     assert value.replace(tzinfo=None).isoformat() == "2024-01-02T03:04:05.123456"
     assert value.astimezone(timezone.utc).hour == expected_utc_hour
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-SQL-006")
+def test_tck_sql_006_portable_precedence_and_associativity(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Exercise every v0.16 Portable SQL precedence row with discriminating values."""
+    from pyspark.sql.connect.proto import relations_pb2
+
+    query = relations_pb2.Relation()
+    query.sql.query = """
+        SELECT (1 + 2) * 3 AS parenthesized,
+               - - 2 AS unary_value,
+               16 / 4 / 2 AS division_value,
+               8 - 3 - 2 AS subtraction_value,
+               1 + 2 * 3 AS mixed_arithmetic,
+               NOT 1 = 1 AS not_predicate,
+               TRUE OR TRUE AND FALSE AS boolean_precedence
+    """
+
+    responses = _execute_relation(raw_spark_connect, query)
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        [
+            "parenthesized",
+            "unary_value",
+            "division_value",
+            "subtraction_value",
+            "mixed_arithmetic",
+            "not_predicate",
+            "boolean_precedence",
+        ],
+    ) == [(9, 2, 2.0, 3, 7, False, True)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-SQL-007")
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(
+            "1 = 1 = TRUE",
+            id="comparison-chain",
+            marks=pytest.mark.reference_gap,
+        ),
+        pytest.param("1 IS NULL IS NULL", id="null-test-chain"),
+    ],
+)
+def test_tck_sql_007_portable_rejects_chained_predicates(
+    raw_spark_connect: RawSparkConnectSession,
+    expression: str,
+) -> None:
+    """Reject comparison and null-test chains instead of importing backend precedence."""
+    from pyspark.sql.connect.proto import relations_pb2
+
+    query = relations_pb2.Relation()
+    query.sql.query = f"SELECT {expression} AS chained_predicate"
+    _assert_relation_rejected(raw_spark_connect, query)
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-EXPR-001")
+def test_tck_expr_001_expression_string_precedence_and_associativity(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Exercise every v0.16 ExpressionString precedence row in a direct plan."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    expressions = [
+        ("parenthesized", "(1 + 2) * 3"),
+        ("unary_value", "- - 2"),
+        ("division_value", "16 / 4 / 2"),
+        ("subtraction_value", "8 - 3 - 2"),
+        ("mixed_arithmetic", "1 + 2 * 3"),
+        ("not_equality", "NOT 1 == 1"),
+        ("not_null_safe_equality", "NOT 1 <=> 2"),
+        ("boolean_precedence", "TRUE OR TRUE AND FALSE"),
+    ]
+    projected = relations_pb2.Relation()
+    projected.project.input.CopyFrom(_range_relation(relations_pb2, end=1))
+    projected.project.expressions.extend(
+        _alias(expressions_pb2, _expression_string(expressions_pb2, text), name)
+        for name, text in expressions
+    )
+
+    responses = _execute_relation(raw_spark_connect, projected)
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        [name for name, _ in expressions],
+    ) == [(9, 2, 2.0, 3, 7, False, True, True)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-EXPR-002")
+@pytest.mark.parametrize(
+    "expression",
+    [
+        pytest.param(
+            "1 == 1 == TRUE",
+            id="equality-chain",
+            marks=pytest.mark.reference_gap,
+        ),
+        pytest.param(
+            "1 <=> 1 <=> TRUE",
+            id="null-safe-equality-chain",
+            marks=pytest.mark.reference_gap,
+        ),
+        pytest.param("1 IS NULL IS NULL", id="null-test-chain"),
+    ],
+)
+def test_tck_expr_002_expression_string_rejects_chained_predicates(
+    raw_spark_connect: RawSparkConnectSession,
+    expression: str,
+) -> None:
+    """Reject ExpressionString predicate chains, including expression-only operators."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    projected = relations_pb2.Relation()
+    projected.project.input.CopyFrom(_range_relation(relations_pb2, end=1))
+    projected.project.expressions.append(_expression_string(expressions_pb2, expression))
+    _assert_relation_rejected(raw_spark_connect, projected)

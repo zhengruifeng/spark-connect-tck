@@ -6,7 +6,7 @@ and run them against a separately managed target server.
 
 The intended implementation requirements are recorded in the [Spark Connect
 1.0 draft](https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz).
-This repository tracks working draft v0.15 and implements a deliberately small,
+This repository tracks working draft v0.16 and implements a deliberately small,
 traceable slice of its `SC-1.0-P1` required profile, pinned to Apache Spark
 4.2.0. It is not a complete conformance suite and must not be used to make a
 Spark Connect 1.0 compatibility claim.
@@ -45,20 +45,26 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-SQL-003` | Portable SQL types | Direct casts assert exact Boolean, numeric, decimal, date, and timestamp schemas. |
 | `TCK-SQL-004` | Portable SQL types | Bare `VARCHAR` must produce an unbounded `UTF8_BINARY` String. |
 | `TCK-SQL-005` | Portable SQL types | `TIMESTAMP` remains zoned under UTC/non-UTC and both Spark timestamp defaults. |
+| `TCK-SQL-006` | Portable SQL expressions | Direct SQL verifies all precedence levels and arithmetic associativity. |
+| `TCK-SQL-007` | Portable SQL expressions | Comparison and null-test predicates must not chain. |
+| `TCK-EXPR-001` | ExpressionString | Direct expressions verify all precedence levels and arithmetic associativity. |
+| `TCK-EXPR-002` | ExpressionString | Comparison, null-safe comparison, and null-test predicates must not chain. |
 
-The direct cases cover all v0.15 required service requests: `ExecutePlan`,
+The direct cases cover all v0.16 required service requests: `ExecutePlan`,
 `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`, `FetchErrorDetails`,
 `CloneSession`, and `GetStatus`. A unit test enforces this mapping.
-`ReattachExecute` and `ReleaseExecute` are optional in v0.15; `AddArtifacts`
+`ReattachExecute` and `ReleaseExecute` are optional in v0.16; `AddArtifacts`
 and `ArtifactStatus` are deferred. The required Portable SQL Core has fixed
 logical aliases and casts; complete Spark SQL semantics, DDL/DML, and
 presentation relations remain outside the core profile.
 
-Draft v0.15 exposes two reference-implementation gaps in Apache Spark 4.2.0:
-bare `VARCHAR` is rejected as missing a length, and `spark.sql.timestampType`
-can change portable `TIMESTAMP` into `TimestampNTZ`. The corresponding required
-cases remain active, so a full live run reports those mismatches. Run the
-currently reference-compatible slice with `-m "not reference_gap"`.
+Draft v0.15 exposes two type-related reference gaps in Apache Spark 4.2.0: bare
+`VARCHAR` is rejected as missing a length, and `spark.sql.timestampType` can
+change portable `TIMESTAMP` into `TimestampNTZ`. Draft v0.16 additionally
+requires chained predicates to be rejected, while Spark accepts chained `=`,
+`==`, and `<=>` comparisons. The corresponding required cases remain active,
+so a full live run reports those mismatches. Run the currently
+reference-compatible slice with `-m "not reference_gap"`.
 
 The draft's canonical JSON bundle, publication commit, and SHA-256 are not yet
 published. Case references are therefore section-level draft references rather
@@ -102,7 +108,7 @@ pytest tests/optional --spark-connect-url sc://localhost:15002
 
 1. Add a `TckCase` with a stable ID, `SC-1.0-P1` manifest, and the narrowest
    available draft references in `src/spark_connect_tck/spec.py`. Replace them
-   with canonical row IDs once the v0.15 bundle is published.
+   with canonical row IDs once the v0.16 bundle is published.
 2. Put the test in `tests/tck/`, mark it `tck_case("TCK-AREA-NNN")`, and add
    `smoke` only when it is deterministic and fast.
 3. Isolate all server state with a unique name and clean it up in `finally`.

@@ -21,6 +21,7 @@ from spark_connect_tck.spec import (
 def test_starter_cases_have_unique_ids_and_manifest_rows() -> None:
     assert len(CASES) == len(CASES_BY_ID)
     assert {case.manifest for case in CASES} == {
+        "SC-1.0-P1-EXPRESSION-SYNTAX",
         "SC-1.0-P1-FUNCTIONS",
         "SC-1.0-P1-PORTABLE-SQL",
         "SC-1.0-P1-WIRE",
@@ -30,7 +31,7 @@ def test_starter_cases_have_unique_ids_and_manifest_rows() -> None:
 
 def test_get_case_returns_registered_case() -> None:
     assert get_case("TCK-WIRE-002").rows[0] == "gRPC RPCs / AnalyzePlan"
-    assert SPECIFICATION_VERSION == "1.0 draft v0.15"
+    assert SPECIFICATION_VERSION == "1.0 draft v0.16"
     assert REFERENCE_SPARK_VERSION == "4.2.0"
 
 

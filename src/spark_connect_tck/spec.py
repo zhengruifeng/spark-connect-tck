@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.15"
+SPECIFICATION_VERSION = "1.0 draft v0.16"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,7 +19,7 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The v0.15 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# The v0.16 SC-1.0-P1 service request inventory. Optional and deferred RPCs
 # intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
@@ -69,7 +69,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "Direct requests exercise every AnalyzePlan operation required by v0.15.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.16.",
         "SC-1.0-P1-WIRE",
         (
             "gRPC RPCs / AnalyzePlan",
@@ -326,7 +326,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-024",
-        "Direct scalar and transform expressions cover the closed v0.15 function kernel.",
+        "Direct scalar and transform expressions cover the closed v0.16 function kernel.",
         "SC-1.0-P1-FUNCTIONS",
         (
             "Functions / abs",
@@ -435,6 +435,60 @@ CASES = (
             "Appendix I.9 / UTC and non-UTC TIMESTAMP coverage",
         ),
         ("Config", "ExecutePlan"),
+    ),
+    TckCase(
+        "TCK-SQL-006",
+        "Portable SQL expressions obey the required precedence and associativity rules.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "SQL-PREC-PRIMARY",
+            "SQL-PREC-UNARY",
+            "SQL-PREC-MULTIPLICATIVE",
+            "SQL-PREC-ADDITIVE",
+            "SQL-PREC-PREDICATE",
+            "SQL-PREC-NOT",
+            "SQL-PREC-AND",
+            "SQL-PREC-OR",
+            "Appendix I.9 / precedence and associativity coverage",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-SQL-007",
+        "Portable SQL rejects unparenthesized chained predicates.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "SQL-PREC-PREDICATE",
+            "Appendix I.9 / chained-predicate rejection",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-EXPR-001",
+        "ExpressionString obeys the required precedence and associativity rules.",
+        "SC-1.0-P1-EXPRESSION-SYNTAX",
+        (
+            "EXPR-PREC-PRIMARY",
+            "EXPR-PREC-UNARY",
+            "EXPR-PREC-MULTIPLICATIVE",
+            "EXPR-PREC-ADDITIVE",
+            "EXPR-PREC-PREDICATE",
+            "EXPR-PREC-NOT",
+            "EXPR-PREC-AND",
+            "EXPR-PREC-OR",
+            "Appendix I.9 / precedence and associativity coverage",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-EXPR-002",
+        "ExpressionString rejects unparenthesized chained predicates.",
+        "SC-1.0-P1-EXPRESSION-SYNTAX",
+        (
+            "EXPR-PREC-PREDICATE",
+            "Appendix I.9 / chained-predicate rejection",
+        ),
+        ("ExecutePlan",),
     ),
 )
 
