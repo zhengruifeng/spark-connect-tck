@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.16"
+SPECIFICATION_VERSION = "1.0 draft v0.17"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,7 +19,7 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The v0.16 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# The v0.17 SC-1.0-P1 service request inventory. Optional and deferred RPCs
 # intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
@@ -69,7 +69,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "Direct requests exercise every AnalyzePlan operation required by v0.16.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.17.",
         "SC-1.0-P1-WIRE",
         (
             "gRPC RPCs / AnalyzePlan",
@@ -326,7 +326,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-024",
-        "Direct scalar and transform expressions cover the closed v0.16 function kernel.",
+        "Direct scalar and transform expressions cover the closed v0.17 function kernel.",
         "SC-1.0-P1-FUNCTIONS",
         (
             "Functions / abs",
@@ -481,6 +481,21 @@ CASES = (
         ("ExecutePlan",),
     ),
     TckCase(
+        "TCK-SQL-008",
+        "Portable SQL lexical productions preserve their exact token semantics.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "Appendix I.2 / ascii_whitespace",
+            "Appendix I.2 / identifier_part",
+            "Appendix I.2 / integer_literal",
+            "Appendix I.2 / decimal_literal and exponent_part",
+            "Appendix I.2 / string_literal and string_unit",
+            "Appendix I.2 / boolean_literal and null_literal",
+            "Appendix I.2 / longest-token matching",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
         "TCK-EXPR-001",
         "ExpressionString obeys the required precedence and associativity rules.",
         "SC-1.0-P1-EXPRESSION-SYNTAX",
@@ -504,6 +519,19 @@ CASES = (
         (
             "EXPR-PREC-PREDICATE",
             "Appendix I.9 / chained-predicate rejection",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-EXPR-003",
+        "ExpressionString lexical productions preserve quoted and multipart attributes.",
+        "SC-1.0-P1-EXPRESSION-SYNTAX",
+        (
+            "Appendix I.2 / reused literal and identifier productions",
+            "Appendix I.8 / expr_attribute_reference",
+            "Appendix I.8 / backtick_identifier and backtick_unit",
+            "Appendix I.8 / non_backtick_scalar",
+            "Appendix I.8 / expr_cast_expression",
         ),
         ("ExecutePlan",),
     ),

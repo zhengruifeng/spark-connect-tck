@@ -6,23 +6,25 @@ The source design is the Spark Connect specification document:
 
 ## Current implementation status
 
-The source document is working draft v0.16, updated 2026-08-11. It defines
+The source document is working draft v0.17, updated 2026-08-19. It defines
 `SC-1.0-P1` as the sole required profile and pins the reference implementation
 to Apache Spark 4.2.0 at commit
 `32f7299601108917fb01920a54e084595b7b3bf8`.
 
-The v0.16 scope differs materially from the earlier v0.8 draft. The required
+The v0.17 scope differs materially from the earlier v0.8 draft. The required
 RPCs are `ExecutePlan`, `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`,
 `FetchErrorDetails`, `CloneSession`, and `GetStatus`. Reattachment RPCs are
 optional, artifact RPCs are deferred, presentation relations are excluded, and
-complete SQL dialects remain optional. Unlike v0.13, v0.16 requires a small
+complete SQL dialects remain optional. Unlike v0.13, v0.17 requires a small
 Portable SQL Core for `SELECT` and `VALUES` queries through `Relation.SQL` and
 the query-returning `SqlCommand.input` path. Draft v0.15 fixes each portable
 type spelling to one logical type, including `REAL` as Float, bare `VARCHAR` as
 an unbounded `UTF8_BINARY` String, and `TIMESTAMP` as Timestamp independently of
 `spark.sql.timestampType`. Draft v0.16 then fixes the complete precedence and
 associativity ladders for Portable SQL and `ExpressionString`; predicates are
-non-associative and cannot be chained.
+non-associative and cannot be chained. Draft v0.17 completes every lexical and
+grammar production and makes direct protobuf construction mandatory for core
+relation and expression cases.
 
 Final profile membership will be controlled by
 `docs/spark-connect/spec/manifests/sc-1.0-p1.json` at an immutable Apache Spark
@@ -43,7 +45,7 @@ The current core slice constructs protobuf requests directly and covers:
    relations.
 5. CreateDataFrameViewCommand with named-table and Catalog visibility.
 6. Direct Arrow result decoding, schema checks, and response identity checks.
-7. Required aggregate functions and the v0.16 scalar kernel, including a
+7. Required aggregate functions and the v0.17 scalar kernel, including a
    worker-free `transform` lambda.
 8. Direct ExpressionString CASE, cast, star, and framed-window expressions.
 9. Summary, covariance, correlation, exact quantile, and stratified-sample
@@ -60,6 +62,10 @@ The current core slice constructs protobuf requests directly and covers:
 14. Default, explicit narrow, and large Arrow variable-width modes for
     top-level and nested String/Binary values across LocalRelation input and
     ExecutePlan output, including empty and null values.
+15. Portable SQL lexical tokens for every literal family, all ASCII whitespace,
+    valid identifiers, keyword case folding, and longest-match comparisons.
+16. Direct `ExpressionString` resolution of unquoted, quoted, Unicode,
+    escaped-backtick, and multipart attributes plus reused literal productions.
 
 ## Known draft/reference gaps
 
@@ -97,6 +103,6 @@ a shared client/server filesystem, a particular catalog implementation, a
 complete Spark SQL dialect, presentation formatting, or vendor-specific
 extensions.
 
-Once the canonical v0.16 bundle is published, draft references must be replaced
+Once the canonical v0.17 bundle is published, draft references must be replaced
 with exact row IDs and the repository must record the bundle publication
 commit, path, and whole-file digest.
