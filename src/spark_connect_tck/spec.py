@@ -359,6 +359,23 @@ CASES = (
         ("ExecutePlan",),
     ),
     TckCase(
+        "TCK-WIRE-026",
+        "Arrow variable-width selection applies recursively to input and result values.",
+        "SC-1.0-P1-ARROW",
+        (
+            "Configuration / spark.sql.execution.arrow.useLargeVarTypes",
+            "ARROW-STRING",
+            "ARROW-BINARY",
+            "ARROW-ARRAY",
+            "ARROW-MAP",
+            "ARROW-STRUCT",
+            "Result delivery / LocalRelation input",
+            "Result delivery / ExecutePlan Arrow results",
+            "Appendix B.1 / variable-width type selection",
+        ),
+        ("Config", "ExecutePlan"),
+    ),
+    TckCase(
         "TCK-SQL-001",
         "Direct Relation.SQL plans cover the Portable SQL Core query and parameter families.",
         "SC-1.0-P1-PORTABLE-SQL",

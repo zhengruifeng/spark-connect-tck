@@ -1600,6 +1600,93 @@ def test_tck_wire_025_parse_star_and_window_expressions_are_direct(
 
 
 @pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-026")
+@pytest.mark.parametrize(
+    ("config_value", "use_large_types"),
+    [
+        pytest.param(None, False, id="default-false"),
+        pytest.param("false", False, id="explicit-false"),
+        pytest.param("true", True, id="explicit-true"),
+    ],
+)
+def test_tck_wire_026_arrow_variable_width_types_round_trip_recursively(
+    raw_spark_connect: RawSparkConnectSession,
+    config_value: str | None,
+    use_large_types: bool,
+) -> None:
+    """Round-trip narrow and large String/Binary values at every required nesting level."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import relations_pb2
+
+    if config_value is not None:
+        proto = raw_spark_connect.proto
+        config_response = raw_spark_connect.stub.Config(
+            proto.ConfigRequest(
+                session_id=raw_spark_connect.session_id,
+                user_context=raw_spark_connect.user_context,
+                client_type="spark-connect-tck",
+                operation=proto.ConfigRequest.Operation(
+                    set=proto.ConfigRequest.Set(
+                        pairs=[
+                            proto.KeyValue(
+                                key="spark.sql.execution.arrow.useLargeVarTypes",
+                                value=config_value,
+                            )
+                        ]
+                    )
+                ),
+            ),
+            timeout=30,
+        )
+        _assert_unary_response_identity(config_response, raw_spark_connect)
+
+    string_type = pa.large_string() if use_large_types else pa.string()
+    binary_type = pa.large_binary() if use_large_types else pa.binary()
+    array_type = pa.list_(string_type)
+    map_type = pa.map_(string_type, binary_type)
+    struct_type = pa.struct(
+        [
+            pa.field("text", string_type),
+            pa.field("payload", binary_type),
+        ]
+    )
+    table = pa.table(
+        {
+            "text": pa.array(["", "spark", None], type=string_type),
+            "payload": pa.array([b"", b"\x00\xff", None], type=binary_type),
+            "texts": pa.array([[], ["", None, "spark"], None], type=array_type),
+            "attributes": pa.array(
+                [[], [("key", b"\x01"), ("empty", b"")], None],
+                type=map_type,
+            ),
+            "record": pa.array(
+                [
+                    {"text": "", "payload": b""},
+                    {"text": None, "payload": b"\x02"},
+                    None,
+                ],
+                type=struct_type,
+            ),
+            "all_null_text": pa.array([None, None, None], type=string_type),
+        }
+    )
+
+    responses = _execute_relation(raw_spark_connect, _local_relation(relations_pb2, table))
+    batches = _decode_arrow_batches(
+        response for response in responses if response.HasField("arrow_batch")
+    )
+    result = pa.Table.from_batches(batches)
+
+    assert result.schema.field("text").type == string_type
+    assert result.schema.field("payload").type == binary_type
+    assert result.schema.field("texts").type == array_type
+    assert result.schema.field("attributes").type == map_type
+    assert result.schema.field("record").type == struct_type
+    assert result.schema.field("all_null_text").type == string_type
+    assert result.to_pylist() == table.to_pylist()
+
+
+@pytest.mark.smoke
 @pytest.mark.tck_case("TCK-SQL-001")
 def test_tck_sql_001_portable_relation_sql_is_direct(
     raw_spark_connect: RawSparkConnectSession,

@@ -40,6 +40,7 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-022` | Commands/catalog | Direct temp-view creation, named-table reads, and catalog relations share session state. |
 | `TCK-WIRE-024` | Functions/expressions | Direct plans cover the required scalar kernel and transform lambda binding. |
 | `TCK-WIRE-025` | Relations/expressions | Direct Parse, star, and framed-window plans preserve structured results. |
+| `TCK-WIRE-026` | Arrow mappings | Narrow/large String and Binary values round-trip recursively through nested types. |
 | `TCK-SQL-001` | Portable SQL | Direct `Relation.SQL` plans cover required queries, joins, clauses, functions, and typed parameters. |
 | `TCK-SQL-002` | Portable SQL | A direct `SqlCommand.input` returns an equivalent executable relation. |
 | `TCK-SQL-003` | Portable SQL types | Direct casts assert exact Boolean, numeric, decimal, date, and timestamp schemas. |

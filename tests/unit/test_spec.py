@@ -21,6 +21,7 @@ from spark_connect_tck.spec import (
 def test_starter_cases_have_unique_ids_and_manifest_rows() -> None:
     assert len(CASES) == len(CASES_BY_ID)
     assert {case.manifest for case in CASES} == {
+        "SC-1.0-P1-ARROW",
         "SC-1.0-P1-EXPRESSION-SYNTAX",
         "SC-1.0-P1-FUNCTIONS",
         "SC-1.0-P1-PORTABLE-SQL",

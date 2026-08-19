@@ -57,6 +57,9 @@ The current core slice constructs protobuf requests directly and covers:
     division, and rejection of chained comparison and null-test predicates.
 13. The corresponding direct `ExpressionString` precedence rules, including
     `==` and `<=>`, plus rejection of chained expression predicates.
+14. Default, explicit narrow, and large Arrow variable-width modes for
+    top-level and nested String/Binary values across LocalRelation input and
+    ExecutePlan output, including empty and null values.
 
 ## Known draft/reference gaps
 
@@ -81,9 +84,9 @@ This is still a starter slice. Major missing areas include the canonical
 client overload rows, providers and writes, the remaining relation and
 expression variants and field-domain branches, full function,
 ExpressionString, and Portable SQL positive/negative corpora, cast modes,
-Arrow mappings, structured error envelopes, authorization, configuration-key
-effects, complete Catalog operations/result schemas, and positive/negative
-command coverage.
+remaining Arrow mappings and delivery boundaries, structured error envelopes,
+authorization, configuration-key effects, complete Catalog operations/result
+schemas, and positive/negative command coverage.
 
 ## Test contract
 
