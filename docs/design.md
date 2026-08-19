@@ -6,16 +6,16 @@ The source design is the Spark Connect specification document:
 
 ## Current implementation status
 
-The source document is working draft v0.20, updated 2026-08-19. It defines
+The source document is working draft v0.25, updated 2026-08-19. It defines
 `SC-1.0-P1` as the sole required profile and pins the reference implementation
 to Apache Spark 4.2.0 at commit
 `32f7299601108917fb01920a54e084595b7b3bf8`.
 
-The v0.20 scope differs materially from the earlier v0.8 draft. The required
+The v0.25 scope differs materially from the earlier v0.8 draft. The required
 RPCs are `ExecutePlan`, `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`,
 `FetchErrorDetails`, `CloneSession`, and `GetStatus`. Reattachment RPCs are
 optional, artifact RPCs are deferred, presentation relations are excluded, and
-complete SQL dialects remain optional. Unlike v0.13, v0.20 requires a small
+complete SQL dialects remain optional. Unlike v0.13, v0.25 requires a small
 Portable SQL Core for `SELECT` and `VALUES` queries through `Relation.SQL` and
 the query-returning `SqlCommand.input` path. Draft v0.15 fixes each portable
 type spelling to one logical type, including `REAL` as Float, bare `VARCHAR` as
@@ -26,8 +26,11 @@ non-associative and cannot be chained. Draft v0.17 completes every lexical and
 grammar production and makes direct protobuf construction mandatory for core
 relation and expression cases. Draft v0.18 clarifies that required function
 spellings are contextual names: they remain identifiers unless followed by an
-opening parenthesis in a matching function-call production. Drafts v0.19 and
-v0.20 contain editorial diagram changes only.
+opening parenthesis in a matching function-call production. Drafts v0.19–v0.22
+contain editorial diagram changes. Draft v0.23 excludes authentication and
+authorization from conformance and defines the TCK as pre-authorized protocol
+testing. Draft v0.24 defines the authoritative per-RPC session-materialization
+matrix, and v0.25 fixes the exact unknown- and live-session release outcomes.
 
 Final profile membership will be controlled by
 `docs/spark-connect/spec/manifests/sc-1.0-p1.json` at an immutable Apache Spark
@@ -38,7 +41,8 @@ a conformance release until those pins exist and every test cites them.
 
 The current core slice constructs protobuf requests directly and covers:
 
-1. All eight required service RPCs.
+1. All eight required service RPCs, including the required unknown-session
+   materialization branches and both `ReleaseSession` tombstone boundaries.
 2. All eight required `AnalyzePlan` operations: Schema, Explain, TreeString,
    IsLocal, IsStreaming, InputFiles, SparkVersion, and DDLParse.
 3. All seven `Config` operations and required time-zone key behavior.
@@ -96,7 +100,7 @@ client overload rows, providers and writes, the remaining relation and
 expression variants and field-domain branches, full function,
 ExpressionString, and Portable SQL positive/negative corpora, cast modes,
 remaining Arrow mappings and delivery boundaries, structured error envelopes,
-authorization, configuration-key effects, complete Catalog operations/result
+configuration-key effects, complete Catalog operations/result
 schemas, and positive/negative command coverage.
 
 ## Test contract
@@ -108,6 +112,6 @@ a shared client/server filesystem, a particular catalog implementation, a
 complete Spark SQL dialect, presentation formatting, or vendor-specific
 extensions.
 
-Once the canonical v0.20 bundle is published, draft references must be replaced
+Once the canonical v0.25 bundle is published, draft references must be replaced
 with exact row IDs and the repository must record the bundle publication
 commit, path, and whole-file digest.

@@ -6,7 +6,7 @@ and run them against a separately managed target server.
 
 The intended implementation requirements are recorded in the [Spark Connect
 1.0 draft](https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz).
-This repository tracks working draft v0.20 and implements a deliberately small,
+This repository tracks working draft v0.25 and implements a deliberately small,
 traceable slice of its `SC-1.0-P1` required profile, pinned to Apache Spark
 4.2.0. It is not a complete conformance suite and must not be used to make a
 Spark Connect 1.0 compatibility claim.
@@ -22,10 +22,10 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-001` | Wire protocol | A direct `ExecutePlan` Range request returns typed Arrow results. |
 | `TCK-WIRE-002` | Wire protocol | Direct requests exercise all eight required `AnalyzePlan` operations. |
 | `TCK-WIRE-003` | Wire protocol | Direct requests exercise all seven `Config` operations. |
-| `TCK-WIRE-005` | Wire protocol | Direct `Interrupt` and `GetStatus` requests report an idle session. |
-| `TCK-WIRE-007` | Wire protocol | A direct `ReleaseSession` request releases an established session. |
-| `TCK-WIRE-008` | Wire protocol | A direct `FetchErrorDetails` request returns the defined unknown-ID response. |
-| `TCK-WIRE-009` | Wire protocol | A direct `CloneSession` request copies configuration into the clone. |
+| `TCK-WIRE-005` | Wire protocol | Unknown-session `Interrupt` materializes state while `GetStatus` requires an existing session. |
+| `TCK-WIRE-007` | Wire protocol | `ReleaseSession` distinguishes unknown-session no-ops from live-session tombstones. |
+| `TCK-WIRE-008` | Wire protocol | Unknown-session `FetchErrorDetails` materializes state before returning an empty lookup. |
+| `TCK-WIRE-009` | Wire protocol | `CloneSession` rejects missing sources and copies configuration from existing sources. |
 | `TCK-WIRE-010` | Relations/expressions | A direct Range/Filter/Project/Sort/Limit plan returns its expected rows. |
 | `TCK-WIRE-011` | Relations/expressions | Direct aggregate plans cover count, sum, average, minimum, and maximum. |
 | `TCK-WIRE-012` | Relations/expressions | Direct Join and SetOperation plans preserve their expected row sets. |
@@ -55,10 +55,10 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-EXPR-003` | ExpressionString lexer | Unquoted, multipart, Unicode, and escaped backtick attribute tokens resolve exactly. |
 | `TCK-EXPR-004` | ExpressionString contextual names | Required function spellings remain attributes outside call position, including mixed case. |
 
-The direct cases cover all v0.20 required service requests: `ExecutePlan`,
+The direct cases cover all v0.25 required service requests: `ExecutePlan`,
 `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`, `FetchErrorDetails`,
 `CloneSession`, and `GetStatus`. A unit test enforces this mapping.
-`ReattachExecute` and `ReleaseExecute` are optional in v0.20; `AddArtifacts`
+`ReattachExecute` and `ReleaseExecute` are optional in v0.25; `AddArtifacts`
 and `ArtifactStatus` are deferred. The required Portable SQL Core has fixed
 logical aliases and casts; complete Spark SQL semantics, DDL/DML, and
 presentation relations remain outside the core profile.
@@ -113,7 +113,7 @@ pytest tests/optional --spark-connect-url sc://localhost:15002
 
 1. Add a `TckCase` with a stable ID, `SC-1.0-P1` manifest, and the narrowest
    available draft references in `src/spark_connect_tck/spec.py`. Replace them
-   with canonical row IDs once the v0.20 bundle is published.
+   with canonical row IDs once the v0.25 bundle is published.
 2. Put the test in `tests/tck/`, mark it `tck_case("TCK-AREA-NNN")`, and add
    `smoke` only when it is deterministic and fast.
 3. Isolate all server state with a unique name and clean it up in `finally`.

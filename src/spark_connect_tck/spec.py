@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.20"
+SPECIFICATION_VERSION = "1.0 draft v0.25"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,7 +19,7 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The v0.20 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# The v0.25 SC-1.0-P1 service request inventory. Optional and deferred RPCs
 # intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
@@ -69,7 +69,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "Direct requests exercise every AnalyzePlan operation required by v0.20.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.25.",
         "SC-1.0-P1-WIRE",
         (
             "gRPC RPCs / AnalyzePlan",
@@ -104,30 +104,47 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-005",
-        "Direct interrupt and operation-status protobuf requests report an idle session.",
+        "Unknown-session Interrupt materializes state while GetStatus does not.",
         "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / Interrupt", "gRPC RPCs / GetStatus"),
+        (
+            "gRPC RPCs / Interrupt",
+            "gRPC RPCs / GetStatus",
+            "Sessions / §8.4.1 / per-RPC session-materialization matrix",
+        ),
         ("Interrupt", "GetStatus"),
     ),
     TckCase(
         "TCK-WIRE-007",
-        "A direct release-session protobuf request releases an established session.",
+        "ReleaseSession distinguishes never-materialized keys from live-session tombstones.",
         "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / ReleaseSession",),
+        (
+            "gRPC RPCs / ReleaseSession",
+            "Sessions / §8.4.1 / unknown-session no-op",
+            "Sessions / §8.4.3.1 / live-session tombstone",
+            "Sessions / §8.4.3.1 / idempotency",
+        ),
         ("ReleaseSession",),
     ),
     TckCase(
         "TCK-WIRE-008",
-        "A direct fetch-error-details protobuf request reports an unknown error ID precisely.",
+        "FetchErrorDetails materializes an unknown session before an empty lookup.",
         "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / FetchErrorDetails",),
+        (
+            "gRPC RPCs / FetchErrorDetails",
+            "Errors / unknown error ID",
+            "Sessions / §8.4.1 / per-RPC session-materialization matrix",
+        ),
         ("FetchErrorDetails",),
     ),
     TckCase(
         "TCK-WIRE-009",
-        "A direct clone-session protobuf request copies session configuration to the clone.",
+        "CloneSession rejects missing sources and copies existing-session configuration.",
         "SC-1.0-P1-WIRE",
-        ("gRPC RPCs / CloneSession",),
+        (
+            "gRPC RPCs / CloneSession",
+            "Sessions / §8.4.1 / missing-source behavior",
+            "Sessions / §8.5 / successful clone",
+        ),
         ("CloneSession",),
     ),
     TckCase(

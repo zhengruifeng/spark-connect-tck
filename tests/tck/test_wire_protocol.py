@@ -326,7 +326,7 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise every AnalyzePlan operation required by the v0.20 wire profile."""
+    """Exercise every AnalyzePlan operation required by the v0.25 wire profile."""
     proto = raw_spark_connect.proto
     request_fields = (
         "schema",
@@ -484,15 +484,13 @@ def test_tck_wire_003_required_config_operations_share_the_raw_session(
 def test_tck_wire_005_interrupt_and_get_status_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Interrupt and GetStatus use direct requests against an established idle session."""
+    """Interrupt materializes an unknown session that GetStatus can then inspect."""
     proto = raw_spark_connect.proto
-    session_response = _get_time_zone(raw_spark_connect)
     interrupt_response = raw_spark_connect.stub.Interrupt(
         proto.InterruptRequest(
             session_id=raw_spark_connect.session_id,
             user_context=raw_spark_connect.user_context,
             client_type="spark-connect-tck",
-            client_observed_server_side_session_id=session_response.server_side_session_id,
             interrupt_type=proto.InterruptRequest.INTERRUPT_TYPE_ALL,
         ),
         timeout=30,
@@ -515,11 +513,47 @@ def test_tck_wire_005_interrupt_and_get_status_are_direct(
 
 
 @pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-005")
+def test_tck_wire_005_get_status_does_not_materialize_an_unknown_session(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """GetStatus rejects an unknown session without leaving one behind."""
+    import grpc
+
+    proto = raw_spark_connect.proto
+    with pytest.raises(grpc.RpcError) as caught:
+        raw_spark_connect.stub.GetStatus(
+            proto.GetStatusRequest(
+                session_id=raw_spark_connect.session_id,
+                user_context=raw_spark_connect.user_context,
+                client_type="spark-connect-tck",
+                operation_status=proto.GetStatusRequest.OperationStatusRequest(),
+            ),
+            timeout=30,
+        )
+
+    assert "INVALID_HANDLE.SESSION_NOT_FOUND" in caught.value.details()
+
+    release_response = raw_spark_connect.stub.ReleaseSession(
+        proto.ReleaseSessionRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+        ),
+        timeout=30,
+    )
+    assert release_response.session_id == raw_spark_connect.session_id
+    assert release_response.server_side_session_id == ""
+
+
+@pytest.mark.smoke
 @pytest.mark.tck_case("TCK-WIRE-007")
 def test_tck_wire_007_release_session_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """ReleaseSession directly releases a session that this test has established."""
+    """Releasing a live session tombstones its logical session key."""
+    import grpc
+
     proto = raw_spark_connect.proto
     session_response = _get_time_zone(raw_spark_connect)
     release_response = raw_spark_connect.stub.ReleaseSession(
@@ -535,21 +569,60 @@ def test_tck_wire_007_release_session_is_direct(
     _assert_unary_response_identity(release_response, raw_spark_connect)
     assert release_response.server_side_session_id == session_response.server_side_session_id
 
+    repeated_response = raw_spark_connect.stub.ReleaseSession(
+        proto.ReleaseSessionRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+        ),
+        timeout=30,
+    )
+    assert repeated_response.session_id == raw_spark_connect.session_id
+    assert repeated_response.server_side_session_id == ""
+
+    with pytest.raises(grpc.RpcError) as caught:
+        _get_time_zone(raw_spark_connect)
+    assert "INVALID_HANDLE.SESSION_CLOSED" in caught.value.details()
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-007")
+@pytest.mark.parametrize("allow_reconnect", [False, True], ids=["tombstone-mode", "reconnect-mode"])
+def test_tck_wire_007_releasing_unknown_session_does_not_tombstone(
+    raw_spark_connect: RawSparkConnectSession,
+    allow_reconnect: bool,
+) -> None:
+    """Releasing a never-materialized session permits later materialization."""
+    proto = raw_spark_connect.proto
+    release_response = raw_spark_connect.stub.ReleaseSession(
+        proto.ReleaseSessionRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+            allow_reconnect=allow_reconnect,
+        ),
+        timeout=30,
+    )
+
+    assert release_response.session_id == raw_spark_connect.session_id
+    assert release_response.server_side_session_id == ""
+
+    materialized_response = _get_time_zone(raw_spark_connect)
+    _assert_unary_response_identity(materialized_response, raw_spark_connect)
+
 
 @pytest.mark.smoke
 @pytest.mark.tck_case("TCK-WIRE-008")
 def test_tck_wire_008_fetch_unknown_error_details_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """FetchErrorDetails responds precisely when a valid but unknown ID is requested."""
+    """FetchErrorDetails materializes an unknown session before its empty lookup."""
     proto = raw_spark_connect.proto
-    session_response = _get_time_zone(raw_spark_connect)
     response = raw_spark_connect.stub.FetchErrorDetails(
         proto.FetchErrorDetailsRequest(
             session_id=raw_spark_connect.session_id,
             user_context=raw_spark_connect.user_context,
             client_type="spark-connect-tck",
-            client_observed_server_side_session_id=session_response.server_side_session_id,
             error_id=str(uuid4()),
         ),
         timeout=30,
@@ -561,6 +634,16 @@ def test_tck_wire_008_fetch_unknown_error_details_is_direct(
     assert response.server_side_session_id == ""
     assert not response.HasField("root_error_idx")
     assert list(response.errors) == []
+
+    release_response = raw_spark_connect.stub.ReleaseSession(
+        proto.ReleaseSessionRequest(
+            session_id=raw_spark_connect.session_id,
+            user_context=raw_spark_connect.user_context,
+            client_type="spark-connect-tck",
+        ),
+        timeout=30,
+    )
+    _assert_unary_response_identity(release_response, raw_spark_connect)
 
 
 @pytest.mark.smoke
@@ -612,6 +695,42 @@ def test_tck_wire_009_clone_session_is_direct(
     assert clone_config_response.session_id == cloned_session_id
     assert clone_config_response.server_side_session_id == clone_response.new_server_side_session_id
     assert [(pair.key, pair.value) for pair in clone_config_response.pairs] == [(key, "UTC")]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-009")
+def test_tck_wire_009_clone_missing_source_creates_neither_session(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """CloneSession rejects a missing source without materializing source or target."""
+    import grpc
+
+    proto = raw_spark_connect.proto
+    target_session_id = str(uuid4())
+    with pytest.raises(grpc.RpcError) as caught:
+        raw_spark_connect.stub.CloneSession(
+            proto.CloneSessionRequest(
+                session_id=raw_spark_connect.session_id,
+                user_context=raw_spark_connect.user_context,
+                client_type="spark-connect-tck",
+                new_session_id=target_session_id,
+            ),
+            timeout=30,
+        )
+
+    assert "INVALID_HANDLE.SESSION_NOT_FOUND" in caught.value.details()
+
+    for session_id in (raw_spark_connect.session_id, target_session_id):
+        release_response = raw_spark_connect.stub.ReleaseSession(
+            proto.ReleaseSessionRequest(
+                session_id=session_id,
+                user_context=raw_spark_connect.user_context,
+                client_type="spark-connect-tck",
+            ),
+            timeout=30,
+        )
+        assert release_response.session_id == session_id
+        assert release_response.server_side_session_id == ""
 
 
 @pytest.mark.smoke
@@ -1691,7 +1810,7 @@ def test_tck_wire_026_arrow_variable_width_types_round_trip_recursively(
 def test_tck_sql_001_portable_relation_sql_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.20 Portable SQL Core through direct Relation.SQL plans."""
+    """Exercise the v0.25 Portable SQL Core through direct Relation.SQL plans."""
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
     grouped = relations_pb2.Relation()
@@ -2038,7 +2157,7 @@ def test_tck_sql_007_portable_rejects_chained_predicates(
 def test_tck_sql_008_portable_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the complete v0.20 Portable SQL lexer with discriminating tokens."""
+    """Exercise the complete v0.25 Portable SQL lexer with discriminating tokens."""
     from pyspark.sql.connect.proto import relations_pb2
 
     query = relations_pb2.Relation()
@@ -2181,7 +2300,7 @@ def test_tck_expr_002_expression_string_rejects_chained_predicates(
 def test_tck_expr_003_expression_string_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Resolve v0.20 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
+    """Resolve v0.25 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
