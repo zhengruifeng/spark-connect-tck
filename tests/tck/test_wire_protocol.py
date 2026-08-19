@@ -326,7 +326,7 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise every AnalyzePlan operation required by the v0.17 wire profile."""
+    """Exercise every AnalyzePlan operation required by the v0.20 wire profile."""
     proto = raw_spark_connect.proto
     request_fields = (
         "schema",
@@ -1381,7 +1381,7 @@ def test_tck_wire_022_view_command_named_table_and_catalog_are_direct(
 def test_tck_wire_024_required_scalar_and_lambda_functions_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.17 scalar kernel and both lambda value/null handling directly."""
+    """Exercise the required scalar kernel and both lambda value/null handling directly."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
@@ -1691,7 +1691,7 @@ def test_tck_wire_026_arrow_variable_width_types_round_trip_recursively(
 def test_tck_sql_001_portable_relation_sql_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.17 Portable SQL Core through direct Relation.SQL plans."""
+    """Exercise the v0.20 Portable SQL Core through direct Relation.SQL plans."""
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
     grouped = relations_pb2.Relation()
@@ -2038,7 +2038,7 @@ def test_tck_sql_007_portable_rejects_chained_predicates(
 def test_tck_sql_008_portable_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the complete v0.17 Portable SQL lexer with discriminating tokens."""
+    """Exercise the complete v0.20 Portable SQL lexer with discriminating tokens."""
     from pyspark.sql.connect.proto import relations_pb2
 
     query = relations_pb2.Relation()
@@ -2069,6 +2069,48 @@ def test_tck_sql_008_portable_lexical_productions(
             "not_equal_bang",
         ],
     ) == [(7, 125.0, 0.2, "Spark 'Connect' Ω 😀", True, None, True, True, True, True)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-SQL-009")
+def test_tck_sql_009_function_names_are_contextual(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Resolve ABS as an identifier except when the next token opens a call."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import commands_pb2, relations_pb2
+
+    create_view = commands_pb2.Command()
+    create_view.create_dataframe_view.input.CopyFrom(
+        _local_relation(relations_pb2, pa.table({"abs": [-3]}))
+    )
+    create_view.create_dataframe_view.name = "abs"
+    create_view.create_dataframe_view.replace = True
+
+    view_created = False
+    try:
+        _execute_command(raw_spark_connect, create_view)
+        view_created = True
+
+        queries = [
+            ("SELECT abs FROM abs", "abs", -3),
+            ("SELECT abs(abs) AS result FROM abs", "result", 3),
+            ("SELECT aBs FROM aBs", "aBs", -3),
+            ("SELECT AbS(aBs) AS result FROM aBs", "result", 3),
+        ]
+        for sql, column, expected in queries:
+            query = relations_pb2.Relation()
+            query.sql.query = sql
+            responses = _execute_relation(raw_spark_connect, query)
+            assert _decode_arrow_tuples(
+                (response for response in responses if response.HasField("arrow_batch")),
+                [column],
+            ) == [(expected,)]
+    finally:
+        if view_created:
+            dropped = relations_pb2.Relation()
+            dropped.catalog.drop_temp_view.view_name = "abs"
+            _execute_relation(raw_spark_connect, dropped)
 
 
 @pytest.mark.smoke
@@ -2139,7 +2181,7 @@ def test_tck_expr_002_expression_string_rejects_chained_predicates(
 def test_tck_expr_003_expression_string_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Resolve v0.17 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
+    """Resolve v0.20 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
@@ -2177,3 +2219,33 @@ def test_tck_expr_003_expression_string_lexical_productions(
         (response for response in responses if response.HasField("arrow_batch")),
         [name for name, _ in expressions],
     ) == [(3, "quoted", 5, 6, 7, "Spark 'Connect' Ω 😀", 0.2)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-EXPR-004")
+def test_tck_expr_004_function_names_are_contextual(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Resolve ABS as an attribute except when the next token opens a call."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    source = _local_relation(relations_pb2, pa.table({"abs": [-3]}))
+    expressions = [
+        ("identifier", "abs"),
+        ("lowercase_call", "abs(abs)"),
+        ("mixed_case_identifier", "aBs"),
+        ("mixed_case_call", "AbS(aBs)"),
+    ]
+    projected = relations_pb2.Relation()
+    projected.project.input.CopyFrom(source)
+    projected.project.expressions.extend(
+        _alias(expressions_pb2, _expression_string(expressions_pb2, text), name)
+        for name, text in expressions
+    )
+
+    responses = _execute_relation(raw_spark_connect, projected)
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        [name for name, _ in expressions],
+    ) == [(-3, 3, -3, 3)]

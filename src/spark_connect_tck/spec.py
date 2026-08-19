@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.17"
+SPECIFICATION_VERSION = "1.0 draft v0.20"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,7 +19,7 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The v0.17 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# The v0.20 SC-1.0-P1 service request inventory. Optional and deferred RPCs
 # intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
@@ -69,7 +69,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "Direct requests exercise every AnalyzePlan operation required by v0.17.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.20.",
         "SC-1.0-P1-WIRE",
         (
             "gRPC RPCs / AnalyzePlan",
@@ -326,7 +326,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-024",
-        "Direct scalar and transform expressions cover the closed v0.17 function kernel.",
+        "Direct scalar and transform expressions cover the closed required function kernel.",
         "SC-1.0-P1-FUNCTIONS",
         (
             "Functions / abs",
@@ -496,6 +496,17 @@ CASES = (
         ("ExecutePlan",),
     ),
     TckCase(
+        "TCK-SQL-009",
+        "Portable SQL function spellings remain identifiers outside call position.",
+        "SC-1.0-P1-PORTABLE-SQL",
+        (
+            "Appendix I.2 / contextual function names",
+            "Appendix I.4 / scalar_function_call",
+            "Appendix I.9 / contextual function-name coverage",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
         "TCK-EXPR-001",
         "ExpressionString obeys the required precedence and associativity rules.",
         "SC-1.0-P1-EXPRESSION-SYNTAX",
@@ -532,6 +543,17 @@ CASES = (
             "Appendix I.8 / backtick_identifier and backtick_unit",
             "Appendix I.8 / non_backtick_scalar",
             "Appendix I.8 / expr_cast_expression",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-EXPR-004",
+        "ExpressionString function spellings remain attributes outside call position.",
+        "SC-1.0-P1-EXPRESSION-SYNTAX",
+        (
+            "Appendix I.2 / contextual function names",
+            "Appendix I.8 / expr_scalar_function_call",
+            "Appendix I.9 / contextual function-name coverage",
         ),
         ("ExecutePlan",),
     ),
