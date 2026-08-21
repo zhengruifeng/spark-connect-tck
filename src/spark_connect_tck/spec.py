@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.25"
+SPECIFICATION_VERSION = "1.0 draft v0.37"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,7 +19,7 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The v0.25 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# The v0.37 SC-1.0-P1 service request inventory. Optional and deferred RPCs
 # intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
@@ -69,7 +69,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "Direct requests exercise every AnalyzePlan operation required by v0.25.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.37.",
         "SC-1.0-P1-WIRE",
         (
             "gRPC RPCs / AnalyzePlan",
@@ -391,6 +391,34 @@ CASES = (
             "Appendix B.1 / variable-width type selection",
         ),
         ("Config", "ExecutePlan"),
+    ),
+    TckCase(
+        "TCK-WIRE-027",
+        "Direct crosstab, describe, and frequent-item plans preserve their statistical results.",
+        "SC-1.0-P1-WIRE",
+        (
+            "Relations / LocalRelation",
+            "Relations / StatCrosstab",
+            "Relations / StatDescribe",
+            "Relations / StatFreqItems",
+        ),
+        ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-WIRE-028",
+        "Direct regex selection, struct extraction, and struct update expressions preserve values.",
+        "SC-1.0-P1-WIRE",
+        (
+            "Relations / LocalRelation",
+            "Relations / Project",
+            "Expressions / UnresolvedRegex",
+            "Expressions / UnresolvedExtractValue",
+            "Expressions / UpdateFields",
+            "Expressions / UnresolvedAttribute",
+            "Expressions / Literal",
+            "Expressions / Alias",
+        ),
+        ("ExecutePlan",),
     ),
     TckCase(
         "TCK-SQL-001",

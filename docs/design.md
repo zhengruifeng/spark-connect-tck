@@ -6,12 +6,12 @@ The source design is the Spark Connect specification document:
 
 ## Current implementation status
 
-The source document is working draft v0.25, updated 2026-08-19. It defines
+The source document is working draft v0.37, updated 2026-08-21. It defines
 `SC-1.0-P1` as the sole required profile and pins the reference implementation
 to Apache Spark 4.2.0 at commit
 `32f7299601108917fb01920a54e084595b7b3bf8`.
 
-The v0.25 scope differs materially from the earlier v0.8 draft. The required
+The v0.37 scope differs materially from the earlier v0.8 draft. The required
 RPCs are `ExecutePlan`, `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`,
 `FetchErrorDetails`, `CloneSession`, and `GetStatus`. Reattachment RPCs are
 optional, artifact RPCs are deferred, presentation relations are excluded, and
@@ -31,6 +31,15 @@ contain editorial diagram changes. Draft v0.23 excludes authentication and
 authorization from conformance and defines the TCK as pre-authorized protocol
 testing. Draft v0.24 defines the authoritative per-RPC session-materialization
 matrix, and v0.25 fixes the exact unknown- and live-session release outcomes.
+Draft v0.26 distinguishes in-process session eviction from process restart;
+v0.27 makes eviction rows conditional on declared fixture capabilities and
+fixes the stale-server-ID restart sequence. Drafts v0.28–v0.34 define the
+closed `SC-TCK-DEPLOYMENT-1` descriptor and `SC-TCK-ADAPTER-1` process
+protocol, make declared eviction rows conformance-gating, fix eviction-reason
+array order and digest encodings, require exact request and response fields and
+JSON types, and fix safe-ASCII field grammars plus a unique line-oriented JSON
+serialization. Drafts v0.35–v0.37 reorganize those requirements and correct
+document outline hierarchy without changing normative semantics.
 
 Final profile membership will be controlled by
 `docs/spark-connect/spec/manifests/sc-1.0-p1.json` at an immutable Apache Spark
@@ -75,6 +84,12 @@ The current core slice constructs protobuf requests directly and covers:
     escaped-backtick, and multipart attributes plus reused literal productions.
 17. Portable SQL and `ExpressionString` contextual function names, including
     lower- and mixed-case identifier and call positions.
+18. Direct crosstab, describe, and frequent-item statistical relations.
+19. Direct unresolved-regex selection, struct extraction, and struct update
+    expressions.
+20. Strict parsing, deterministic serialization, digest binding, action
+    validation, and subprocess error handling for the v0.37 deployment
+    descriptor and adapter contracts.
 
 ## Known draft/reference gaps
 
@@ -101,7 +116,10 @@ expression variants and field-domain branches, full function,
 ExpressionString, and Portable SQL positive/negative corpora, cast modes,
 remaining Arrow mappings and delivery boundaries, structured error envelopes,
 configuration-key effects, complete Catalog operations/result
-schemas, and positive/negative command coverage.
+schemas, and positive/negative command coverage. The required controlled
+restart sequence, descriptor-declared idle/resource-pressure eviction rows,
+their explicit `NOT_APPLICABLE` results, and machine-readable conformance
+report emission are also not implemented yet.
 
 ## Test contract
 
@@ -112,6 +130,6 @@ a shared client/server filesystem, a particular catalog implementation, a
 complete Spark SQL dialect, presentation formatting, or vendor-specific
 extensions.
 
-Once the canonical v0.25 bundle is published, draft references must be replaced
+Once the canonical v0.37 bundle is published, draft references must be replaced
 with exact row IDs and the repository must record the bundle publication
 commit, path, and whole-file digest.

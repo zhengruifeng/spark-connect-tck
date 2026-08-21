@@ -6,7 +6,7 @@ and run them against a separately managed target server.
 
 The intended implementation requirements are recorded in the [Spark Connect
 1.0 draft](https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz).
-This repository tracks working draft v0.25 and implements a deliberately small,
+This repository tracks working draft v0.37 and implements a deliberately small,
 traceable slice of its `SC-1.0-P1` required profile, pinned to Apache Spark
 4.2.0. It is not a complete conformance suite and must not be used to make a
 Spark Connect 1.0 compatibility claim.
@@ -41,6 +41,8 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-024` | Functions/expressions | Direct plans cover the required scalar kernel and transform lambda binding. |
 | `TCK-WIRE-025` | Relations/expressions | Direct Parse, star, and framed-window plans preserve structured results. |
 | `TCK-WIRE-026` | Arrow mappings | Narrow/large String and Binary values round-trip recursively through nested types. |
+| `TCK-WIRE-027` | Relations/expressions | Direct crosstab, describe, and frequent-item plans preserve statistical results. |
+| `TCK-WIRE-028` | Relations/expressions | Direct regex selection, struct extraction, and struct update expressions preserve values. |
 | `TCK-SQL-001` | Portable SQL | Direct `Relation.SQL` plans cover required queries, joins, clauses, functions, and typed parameters. |
 | `TCK-SQL-002` | Portable SQL | A direct `SqlCommand.input` returns an equivalent executable relation. |
 | `TCK-SQL-003` | Portable SQL types | Direct casts assert exact Boolean, numeric, decimal, date, and timestamp schemas. |
@@ -55,13 +57,24 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-EXPR-003` | ExpressionString lexer | Unquoted, multipart, Unicode, and escaped backtick attribute tokens resolve exactly. |
 | `TCK-EXPR-004` | ExpressionString contextual names | Required function spellings remain attributes outside call position, including mixed case. |
 
-The direct cases cover all v0.25 required service requests: `ExecutePlan`,
+The direct cases cover all v0.37 required service requests: `ExecutePlan`,
 `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`, `FetchErrorDetails`,
 `CloneSession`, and `GetStatus`. A unit test enforces this mapping.
-`ReattachExecute` and `ReleaseExecute` are optional in v0.25; `AddArtifacts`
+`ReattachExecute` and `ReleaseExecute` are optional in v0.37; `AddArtifacts`
 and `ArtifactStatus` are deferred. The required Portable SQL Core has fixed
 logical aliases and casts; complete Spark SQL semantics, DDL/DML, and
 presentation relations remain outside the core profile.
+
+Drafts v0.28–v0.34 define the out-of-band `SC-TCK-DEPLOYMENT-1` descriptor and
+`SC-TCK-ADAPTER-1` process protocol used to control lifecycle fixtures. This
+repository validates their closed JSON schemas, safe-ASCII fields, unique
+line-oriented descriptor bytes and digests, action arguments, response
+identities, and adapter failures. The runner accepts local descriptor and
+adapter paths through `--deployment-descriptor` and `--deployment-adapter`.
+Controlled restart and
+eviction cases, conditional lifecycle result rows, and conformance-report
+emission are not wired yet; supplying these options alone does not run those
+actions or complete the v0.37 lifecycle requirements.
 
 Draft v0.15 exposes two type-related reference gaps in Apache Spark 4.2.0: bare
 `VARCHAR` is rejected as missing a length, and `spark.sql.timestampType` can
@@ -113,7 +126,7 @@ pytest tests/optional --spark-connect-url sc://localhost:15002
 
 1. Add a `TckCase` with a stable ID, `SC-1.0-P1` manifest, and the narrowest
    available draft references in `src/spark_connect_tck/spec.py`. Replace them
-   with canonical row IDs once the v0.25 bundle is published.
+   with canonical row IDs once the v0.37 bundle is published.
 2. Put the test in `tests/tck/`, mark it `tck_case("TCK-AREA-NNN")`, and add
    `smoke` only when it is deterministic and fast.
 3. Isolate all server state with a unique name and clean it up in `finally`.

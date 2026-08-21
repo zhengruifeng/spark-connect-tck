@@ -1,7 +1,7 @@
-"""Reference-client smoke checks outside the draft v0.25 core TCK.
+"""Reference-client smoke checks outside the draft v0.37 core TCK.
 
 These checks intentionally exercise Spark SQL 4.2 and presentation behavior.
-They are useful compatibility probes, but the v0.25 core includes only the
+They are useful compatibility probes, but the v0.37 core includes only the
 restricted Portable SQL Core; complete Spark SQL statement semantics belong to
 a separate dialect profile, and presentation relations remain excluded.
 """

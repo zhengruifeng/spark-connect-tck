@@ -326,7 +326,7 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise every AnalyzePlan operation required by the v0.25 wire profile."""
+    """Exercise every AnalyzePlan operation required by the v0.37 wire profile."""
     proto = raw_spark_connect.proto
     request_fields = (
         "schema",
@@ -1810,7 +1810,7 @@ def test_tck_wire_026_arrow_variable_width_types_round_trip_recursively(
 def test_tck_sql_001_portable_relation_sql_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.25 Portable SQL Core through direct Relation.SQL plans."""
+    """Exercise the v0.37 Portable SQL Core through direct Relation.SQL plans."""
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
     grouped = relations_pb2.Relation()
@@ -2157,7 +2157,7 @@ def test_tck_sql_007_portable_rejects_chained_predicates(
 def test_tck_sql_008_portable_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the complete v0.25 Portable SQL lexer with discriminating tokens."""
+    """Exercise the complete v0.37 Portable SQL lexer with discriminating tokens."""
     from pyspark.sql.connect.proto import relations_pb2
 
     query = relations_pb2.Relation()
@@ -2300,7 +2300,7 @@ def test_tck_expr_002_expression_string_rejects_chained_predicates(
 def test_tck_expr_003_expression_string_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Resolve v0.25 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
+    """Resolve v0.37 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
@@ -2368,3 +2368,128 @@ def test_tck_expr_004_function_names_are_contextual(
         (response for response in responses if response.HasField("arrow_batch")),
         [name for name, _ in expressions],
     ) == [(-3, 3, -3, 3)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-027")
+def test_tck_wire_027_remaining_statistics_relations_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Execute crosstab, describe, and frequent-item relations through raw protobuf."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import relations_pb2
+
+    source = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "group": pa.array(["a", "a", "b", "b"]),
+                "label": pa.array(["x", "y", "x", "x"]),
+                "number": pa.array([1, 1, 3, 3], type=pa.int64()),
+            }
+        ),
+    )
+
+    crosstab = relations_pb2.Relation()
+    crosstab.crosstab.input.CopyFrom(source)
+    crosstab.crosstab.col1 = "group"
+    crosstab.crosstab.col2 = "label"
+
+    described = relations_pb2.Relation()
+    described.describe.input.CopyFrom(source)
+    described.describe.cols.append("number")
+
+    frequent = relations_pb2.Relation()
+    frequent.freq_items.input.CopyFrom(source)
+    frequent.freq_items.cols.append("group")
+    frequent.freq_items.support = 0.5
+
+    crosstab_responses = _execute_relation(raw_spark_connect, crosstab)
+    describe_responses = _execute_relation(raw_spark_connect, described)
+    frequent_responses = _execute_relation(raw_spark_connect, frequent)
+
+    assert sorted(
+        _decode_arrow_tuples(
+            (response for response in crosstab_responses if response.HasField("arrow_batch")),
+            ["group_label", "x", "y"],
+        )
+    ) == [("a", 1, 1), ("b", 2, 0)]
+    assert _decode_arrow_tuples(
+        (response for response in describe_responses if response.HasField("arrow_batch")),
+        ["summary", "number"],
+    ) == [
+        ("count", "4"),
+        ("mean", "2.0"),
+        ("stddev", "1.1547005383792515"),
+        ("min", "1"),
+        ("max", "3"),
+    ]
+    frequent_rows = _decode_arrow_tuples(
+        (response for response in frequent_responses if response.HasField("arrow_batch")),
+        ["group_freqItems"],
+    )
+    assert len(frequent_rows) == 1
+    assert set(frequent_rows[0][0]) == {"a", "b"}
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-028")
+def test_tck_wire_028_regex_extract_and_update_expressions_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Execute regex selection plus struct extraction and updates through raw protobuf."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    source = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "alpha": pa.array([1], type=pa.int64()),
+                "beta": pa.array([2], type=pa.int64()),
+                "record": pa.array(
+                    [{"left": 3, "right": 4}],
+                    type=pa.struct(
+                        [
+                            pa.field("left", pa.int64()),
+                            pa.field("right", pa.int64()),
+                        ]
+                    ),
+                ),
+            }
+        ),
+    )
+
+    regex = expressions_pb2.Expression()
+    regex.unresolved_regex.col_name = "`(alpha|beta)`"
+
+    extracted = expressions_pb2.Expression()
+    extracted.unresolved_extract_value.child.CopyFrom(_attribute(expressions_pb2, "record"))
+    extracted.unresolved_extract_value.extraction.CopyFrom(_string_literal(expressions_pb2, "left"))
+
+    updated = expressions_pb2.Expression()
+    updated.update_fields.struct_expression.CopyFrom(_attribute(expressions_pb2, "record"))
+    updated.update_fields.field_name = "right"
+    updated.update_fields.value_expression.CopyFrom(_long_literal(expressions_pb2, 10))
+
+    dropped = expressions_pb2.Expression()
+    dropped.update_fields.struct_expression.CopyFrom(_attribute(expressions_pb2, "record"))
+    dropped.update_fields.field_name = "right"
+
+    projected = relations_pb2.Relation()
+    projected.project.input.CopyFrom(source)
+    projected.project.expressions.extend(
+        [
+            regex,
+            _alias(expressions_pb2, extracted, "extracted"),
+            _alias(expressions_pb2, updated, "updated"),
+            _alias(expressions_pb2, dropped, "dropped"),
+        ]
+    )
+
+    responses = _execute_relation(raw_spark_connect, projected)
+
+    assert _decode_arrow_tuples(
+        (response for response in responses if response.HasField("arrow_batch")),
+        ["alpha", "beta", "extracted", "updated", "dropped"],
+    ) == [(1, 2, 3, {"left": 3, "right": 10}, {"left": 3})]

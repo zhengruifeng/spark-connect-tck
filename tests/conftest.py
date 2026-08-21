@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
 
+from spark_connect_tck.deployment import DeploymentContractError, DeploymentDescriptor
 from spark_connect_tck.spec import CASES_BY_ID
 
 if TYPE_CHECKING:
@@ -36,6 +38,20 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=os.environ.get("SPARK_CONNECT_URL"),
         metavar="URL",
         help="Spark Connect URL; defaults to the SPARK_CONNECT_URL environment variable.",
+    )
+    group.addoption(
+        "--deployment-descriptor",
+        action="store",
+        default=os.environ.get("SPARK_CONNECT_TCK_DEPLOYMENT_DESCRIPTOR"),
+        metavar="PATH",
+        help="SC-TCK-DEPLOYMENT-1 descriptor for controlled lifecycle cases.",
+    )
+    group.addoption(
+        "--deployment-adapter",
+        action="store",
+        default=os.environ.get("SPARK_CONNECT_TCK_DEPLOYMENT_ADAPTER"),
+        metavar="PATH",
+        help="SC-TCK-ADAPTER-1 executable for controlled lifecycle actions.",
     )
 
 
@@ -75,6 +91,25 @@ def spark_connect_url(pytestconfig: pytest.Config) -> str:
             "to run Spark Connect TCK cases."
         )
     return url
+
+
+@pytest.fixture(scope="session")
+def deployment_descriptor(pytestconfig: pytest.Config) -> DeploymentDescriptor | None:
+    """Load and validate the optional run-specific deployment descriptor."""
+    path = pytestconfig.getoption("deployment_descriptor")
+    if not path:
+        return None
+    try:
+        return DeploymentDescriptor.from_path(path)
+    except (DeploymentContractError, OSError) as error:
+        raise pytest.UsageError(f"Invalid deployment descriptor {path!r}: {error}") from error
+
+
+@pytest.fixture(scope="session")
+def deployment_adapter_path(pytestconfig: pytest.Config) -> Path | None:
+    """Return the local adapter executable supplied for controlled lifecycle cases."""
+    path = pytestconfig.getoption("deployment_adapter")
+    return Path(path) if path else None
 
 
 @pytest.fixture(scope="session")
