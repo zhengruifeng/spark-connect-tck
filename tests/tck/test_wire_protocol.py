@@ -333,7 +333,7 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise every AnalyzePlan operation required by the v0.37 wire profile."""
+    """Exercise every AnalyzePlan operation required by the v0.41 wire profile."""
     proto = raw_spark_connect.proto
     request_fields = (
         "schema",
@@ -1817,7 +1817,7 @@ def test_tck_wire_026_arrow_variable_width_types_round_trip_recursively(
 def test_tck_sql_001_portable_relation_sql_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.37 Portable SQL Core through direct Relation.SQL plans."""
+    """Exercise the v0.41 Portable SQL Core through direct Relation.SQL plans."""
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
     grouped = relations_pb2.Relation()
@@ -2164,7 +2164,7 @@ def test_tck_sql_007_portable_rejects_chained_predicates(
 def test_tck_sql_008_portable_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the complete v0.37 Portable SQL lexer with discriminating tokens."""
+    """Exercise the complete v0.41 Portable SQL lexer with discriminating tokens."""
     from pyspark.sql.connect.proto import relations_pb2
 
     query = relations_pb2.Relation()
@@ -2307,7 +2307,7 @@ def test_tck_expr_002_expression_string_rejects_chained_predicates(
 def test_tck_expr_003_expression_string_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Resolve v0.37 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
+    """Resolve v0.41 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
@@ -2661,3 +2661,237 @@ def test_tck_wire_030_nearest_by_join_exact_mode_is_direct(
         (response for response in left_outer_responses if response.HasField("arrow_batch")),
         ["user_id", "product"],
     ) == [(1, None), (2, None), (3, None)]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-030")
+def test_tck_wire_030_nearest_by_join_similarity_nulls_and_ties_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Exercise similarity ranking, NULL ranks, empty inner matches, and top-k ties directly."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    queries = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "query_id": pa.array([1, 2], type=pa.int64()),
+                "score": pa.array([10.0, None], type=pa.float64()),
+            }
+        ),
+    )
+    candidates = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "candidate": pa.array(["A", "B", "ignored"]),
+                "candidate_score": pa.array([9.0, 11.0, None], type=pa.float64()),
+            }
+        ),
+    )
+    similarity = _function(
+        expressions_pb2,
+        "*",
+        _long_literal(expressions_pb2, -1),
+        _function(
+            expressions_pb2,
+            "abs",
+            _function(
+                expressions_pb2,
+                "-",
+                _attribute(expressions_pb2, "score"),
+                _attribute(expressions_pb2, "candidate_score"),
+            ),
+        ),
+    )
+
+    nearest_tied = relations_pb2.Relation()
+    nearest_tied.nearest_by_join.left.CopyFrom(queries)
+    nearest_tied.nearest_by_join.right.CopyFrom(candidates)
+    nearest_tied.nearest_by_join.ranking_expression.CopyFrom(similarity)
+    nearest_tied.nearest_by_join.num_results = 1
+    nearest_tied.nearest_by_join.join_type = "inner"
+    nearest_tied.nearest_by_join.mode = "exact"
+    nearest_tied.nearest_by_join.direction = "similarity"
+
+    nearest_tied_selected = relations_pb2.Relation()
+    nearest_tied_selected.project.input.CopyFrom(nearest_tied)
+    nearest_tied_selected.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "query_id"),
+            _attribute(expressions_pb2, "candidate"),
+        ]
+    )
+
+    empty_candidates = relations_pb2.Relation()
+    empty_candidates.filter.input.CopyFrom(candidates)
+    empty_candidates.filter.condition.CopyFrom(_bool_literal(expressions_pb2, False))
+
+    nearest_empty_inner = relations_pb2.Relation()
+    nearest_empty_inner.nearest_by_join.left.CopyFrom(queries)
+    nearest_empty_inner.nearest_by_join.right.CopyFrom(empty_candidates)
+    nearest_empty_inner.nearest_by_join.ranking_expression.CopyFrom(similarity)
+    nearest_empty_inner.nearest_by_join.num_results = 1
+    nearest_empty_inner.nearest_by_join.join_type = "inner"
+    nearest_empty_inner.nearest_by_join.mode = "exact"
+    nearest_empty_inner.nearest_by_join.direction = "similarity"
+
+    nearest_tied_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(
+            relations_pb2,
+            expressions_pb2,
+            nearest_tied_selected,
+            ["query_id"],
+        ),
+    )
+    rows = _decode_arrow_tuples(
+        (response for response in nearest_tied_responses if response.HasField("arrow_batch")),
+        ["query_id", "candidate"],
+    )
+    assert len(rows) == 1
+    assert rows[0][0] == 1
+    assert rows[0][1] in {"A", "B"}
+
+    nearest_empty_inner_responses = _execute_relation(raw_spark_connect, nearest_empty_inner)
+    assert sum(
+        batch.num_rows
+        for batch in _decode_arrow_batches(
+            response
+            for response in nearest_empty_inner_responses
+            if response.HasField("arrow_batch")
+        )
+    ) == 0
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-031")
+def test_tck_wire_031_as_of_join_core_semantics_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Exercise direct AsOfJoin direction, tolerance, exact-match, and outer semantics."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    left = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "a": pa.array([1, 5, 10], type=pa.int64()),
+                "b": pa.array(["x", "y", "z"]),
+                "left_val": pa.array(["a", "b", "c"]),
+            }
+        ),
+    )
+    right = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "right_a": pa.array([1, 2, 3, 6, 7], type=pa.int64()),
+                "b": pa.array(["v", "w", "x", "y", "z"]),
+                "right_val": pa.array([1, 2, 3, 6, 7], type=pa.int64()),
+            }
+        ),
+    )
+
+    backward_using = relations_pb2.Relation()
+    backward_using.as_of_join.left.CopyFrom(left)
+    backward_using.as_of_join.right.CopyFrom(right)
+    backward_using.as_of_join.left_as_of.CopyFrom(_attribute(expressions_pb2, "a"))
+    backward_using.as_of_join.right_as_of.CopyFrom(_attribute(expressions_pb2, "right_a"))
+    backward_using.as_of_join.using_columns.append("b")
+    backward_using.as_of_join.join_type = "leftouter"
+    backward_using.as_of_join.allow_exact_matches = True
+    backward_using.as_of_join.direction = "backward"
+
+    backward_selected = relations_pb2.Relation()
+    backward_selected.project.input.CopyFrom(backward_using)
+    backward_selected.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "a"),
+            _attribute(expressions_pb2, "left_val"),
+            _attribute(expressions_pb2, "right_val"),
+        ]
+    )
+
+    forward_inner = relations_pb2.Relation()
+    forward_inner.as_of_join.left.CopyFrom(left)
+    forward_inner.as_of_join.right.CopyFrom(right)
+    forward_inner.as_of_join.left_as_of.CopyFrom(_attribute(expressions_pb2, "a"))
+    forward_inner.as_of_join.right_as_of.CopyFrom(_attribute(expressions_pb2, "right_a"))
+    forward_inner.as_of_join.join_type = "inner"
+    forward_inner.as_of_join.allow_exact_matches = True
+    forward_inner.as_of_join.direction = "forward"
+
+    forward_selected = relations_pb2.Relation()
+    forward_selected.project.input.CopyFrom(forward_inner)
+    forward_selected.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "a"),
+            _attribute(expressions_pb2, "right_val"),
+        ]
+    )
+
+    nearest_left = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "left_key": pa.array([10], type=pa.int64()),
+                "left_label": pa.array(["query"]),
+            }
+        ),
+    )
+    nearest_right = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "right_key": pa.array([8, 10, 12], type=pa.int64()),
+                "right_label": pa.array(["prev", "exact", "next"]),
+            }
+        ),
+    )
+    nearest_tied = relations_pb2.Relation()
+    nearest_tied.as_of_join.left.CopyFrom(nearest_left)
+    nearest_tied.as_of_join.right.CopyFrom(nearest_right)
+    nearest_tied.as_of_join.left_as_of.CopyFrom(_attribute(expressions_pb2, "left_key"))
+    nearest_tied.as_of_join.right_as_of.CopyFrom(_attribute(expressions_pb2, "right_key"))
+    nearest_tied.as_of_join.join_type = "leftouter"
+    nearest_tied.as_of_join.tolerance.CopyFrom(_long_literal(expressions_pb2, 2))
+    nearest_tied.as_of_join.allow_exact_matches = False
+    nearest_tied.as_of_join.direction = "nearest"
+
+    nearest_tied_selected = relations_pb2.Relation()
+    nearest_tied_selected.project.input.CopyFrom(nearest_tied)
+    nearest_tied_selected.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "left_key"),
+            _attribute(expressions_pb2, "right_label"),
+        ]
+    )
+
+    backward_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, backward_selected, ["a"]),
+    )
+    forward_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, forward_selected, ["a"]),
+    )
+    nearest_tied_responses = _execute_relation(raw_spark_connect, nearest_tied_selected)
+
+    assert _decode_arrow_tuples(
+        (response for response in backward_responses if response.HasField("arrow_batch")),
+        ["a", "left_val", "right_val"],
+    ) == [(1, "a", None), (5, "b", None), (10, "c", 7)]
+    assert _decode_arrow_tuples(
+        (response for response in forward_responses if response.HasField("arrow_batch")),
+        ["a", "right_val"],
+    ) == [(1, 1), (5, 6)]
+    nearest_rows = _decode_arrow_tuples(
+        (response for response in nearest_tied_responses if response.HasField("arrow_batch")),
+        ["left_key", "right_label"],
+    )
+    assert len(nearest_rows) == 1
+    assert nearest_rows[0][0] == 10
+    assert nearest_rows[0][1] in {"prev", "next"}

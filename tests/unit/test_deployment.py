@@ -1,4 +1,4 @@
-"""Unit coverage for the draft v0.37 deployment descriptor and adapter protocol."""
+"""Unit coverage for the draft v0.41 deployment descriptor and adapter protocol."""
 
 from __future__ import annotations
 
