@@ -206,7 +206,7 @@ class DeploymentDescriptor:
         }
 
     def canonical_bytes(self) -> bytes:
-        """Serialize with the unique line layout required by draft v0.41."""
+        """Serialize with the unique line layout required by draft v0.42."""
         value = self.as_dict()
         keys = sorted(value)
         lines = ["{"]

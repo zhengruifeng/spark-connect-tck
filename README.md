@@ -6,7 +6,7 @@ and run them against a separately managed target server.
 
 The intended implementation requirements are recorded in the [Spark Connect
 1.0 draft](https://docs.google.com/document/d/1FFBrD__93Pdznj4roy2UrDpoRzMQnhjvfxrtChzXPpg/edit?tab=t.0#heading=h.lweyg2cvmawz).
-This repository tracks working draft v0.41 and implements a deliberately small,
+This repository tracks working draft v0.42 and implements a deliberately small,
 traceable slice of its `SC-1.0-P1` required profile, pinned to Apache Spark
 4.2.0. It is not a complete conformance suite and must not be used to make a
 Spark Connect 1.0 compatibility claim.
@@ -46,6 +46,7 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-029` | Relations/expressions | Direct referenced SQL relations and named observation metrics preserve results and response values. |
 | `TCK-WIRE-030` | Relations/expressions | Direct exact nearest-by joins preserve direction, NULL-rank, top-k, tie, and outer-match semantics. |
 | `TCK-WIRE-031` | Relations/expressions | Direct as-of joins preserve direction, tolerance, exact-match, using-column, and outer-match semantics. |
+| `TCK-WIRE-032` | Relations/expressions | Direct aggregate plans preserve rollup, cube, grouping-set, pivot, and pivot-schema-discovery semantics. |
 | `TCK-SQL-001` | Portable SQL | Direct `Relation.SQL` plans cover required queries, joins, clauses, functions, and typed parameters. |
 | `TCK-SQL-002` | Portable SQL | A direct `SqlCommand.input` returns an equivalent executable relation. |
 | `TCK-SQL-003` | Portable SQL types | Direct casts assert exact Boolean, numeric, decimal, date, and timestamp schemas. |
@@ -60,10 +61,10 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-EXPR-003` | ExpressionString lexer | Unquoted, multipart, Unicode, and escaped backtick attribute tokens resolve exactly. |
 | `TCK-EXPR-004` | ExpressionString contextual names | Required function spellings remain attributes outside call position, including mixed case. |
 
-The direct cases cover all v0.41 required service requests: `ExecutePlan`,
+The direct cases cover all v0.42 required service requests: `ExecutePlan`,
 `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`, `FetchErrorDetails`,
 `CloneSession`, and `GetStatus`. A unit test enforces this mapping.
-`ReattachExecute` and `ReleaseExecute` are optional in v0.41; `AddArtifacts`
+`ReattachExecute` and `ReleaseExecute` are optional in v0.42; `AddArtifacts`
 and `ArtifactStatus` are deferred. The required Portable SQL Core has fixed
 logical aliases and casts; complete Spark SQL semantics, DDL/DML, and
 presentation relations remain outside the core profile.
@@ -77,7 +78,7 @@ adapter paths through `--deployment-descriptor` and `--deployment-adapter`.
 Controlled restart and
 eviction cases, conditional lifecycle result rows, and conformance-report
 emission are not wired yet; supplying these options alone does not run those
-actions or complete the v0.41 lifecycle requirements.
+actions or complete the v0.42 lifecycle requirements.
 
 Draft v0.15 exposes two type-related reference gaps in Apache Spark 4.2.0: bare
 `VARCHAR` is rejected as missing a length, and `spark.sql.timestampType` can
@@ -129,7 +130,7 @@ pytest tests/optional --spark-connect-url sc://localhost:15002
 
 1. Add a `TckCase` with a stable ID, `SC-1.0-P1` manifest, and the narrowest
    available draft references in `src/spark_connect_tck/spec.py`. Replace them
-   with canonical row IDs once the v0.41 bundle is published.
+   with canonical row IDs once the v0.42 bundle is published.
 2. Put the test in `tests/tck/`, mark it `tck_case("TCK-AREA-NNN")`, and add
    `smoke` only when it is deterministic and fast.
 3. Isolate all server state with a unique name and clean it up in `finally`.

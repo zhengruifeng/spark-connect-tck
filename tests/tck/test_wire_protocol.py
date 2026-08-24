@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -333,7 +334,7 @@ def test_tck_wire_001_execute_plan_range_returns_arrow(
 def test_tck_wire_002_required_analyze_plan_operations_are_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise every AnalyzePlan operation required by the v0.41 wire profile."""
+    """Exercise every AnalyzePlan operation required by the v0.42 wire profile."""
     proto = raw_spark_connect.proto
     request_fields = (
         "schema",
@@ -1817,7 +1818,7 @@ def test_tck_wire_026_arrow_variable_width_types_round_trip_recursively(
 def test_tck_sql_001_portable_relation_sql_is_direct(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the v0.41 Portable SQL Core through direct Relation.SQL plans."""
+    """Exercise the v0.42 Portable SQL Core through direct Relation.SQL plans."""
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
     grouped = relations_pb2.Relation()
@@ -2164,7 +2165,7 @@ def test_tck_sql_007_portable_rejects_chained_predicates(
 def test_tck_sql_008_portable_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Exercise the complete v0.41 Portable SQL lexer with discriminating tokens."""
+    """Exercise the complete v0.42 Portable SQL lexer with discriminating tokens."""
     from pyspark.sql.connect.proto import relations_pb2
 
     query = relations_pb2.Relation()
@@ -2307,7 +2308,7 @@ def test_tck_expr_002_expression_string_rejects_chained_predicates(
 def test_tck_expr_003_expression_string_lexical_productions(
     raw_spark_connect: RawSparkConnectSession,
 ) -> None:
-    """Resolve v0.41 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
+    """Resolve v0.42 unquoted, quoted, escaped, Unicode, and multipart attribute tokens."""
     import pyarrow as pa
     from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
 
@@ -2895,3 +2896,135 @@ def test_tck_wire_031_as_of_join_core_semantics_are_direct(
     assert len(nearest_rows) == 1
     assert nearest_rows[0][0] == 10
     assert nearest_rows[0][1] in {"prev", "next"}
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-032")
+def test_tck_wire_032_aggregate_grouping_and_pivot_semantics_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Exercise direct rollup, cube, grouping sets, explicit pivot, and pivot schema analysis."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    source = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "k1": pa.array(["A", "A", "B"]),
+                "k2": pa.array(["X", "Y", "X"]),
+                "v": pa.array([1, 2, 3], type=pa.int64()),
+            }
+        ),
+    )
+
+    def aggregate(group_type: int) -> Any:
+        relation = relations_pb2.Relation()
+        relation.aggregate.input.CopyFrom(source)
+        relation.aggregate.group_type = group_type
+        relation.aggregate.grouping_expressions.extend(
+            [_attribute(expressions_pb2, "k1"), _attribute(expressions_pb2, "k2")]
+        )
+        relation.aggregate.aggregate_expressions.append(
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "sum", _attribute(expressions_pb2, "v")),
+                "total",
+            )
+        )
+        return relation
+
+    rollup = aggregate(relations_pb2.Aggregate.GROUP_TYPE_ROLLUP)
+    cube = aggregate(relations_pb2.Aggregate.GROUP_TYPE_CUBE)
+    grouping_sets = aggregate(relations_pb2.Aggregate.GROUP_TYPE_GROUPING_SETS)
+    grouping_sets.aggregate.grouping_sets.add().grouping_set.append(
+        _attribute(expressions_pb2, "k1")
+    )
+    grouping_sets.aggregate.grouping_sets.add().grouping_set.append(
+        _attribute(expressions_pb2, "k2")
+    )
+    grouping_sets.aggregate.grouping_sets.add()
+
+    def aggregate_rows(relation: Any) -> Counter[tuple[Any, ...]]:
+        responses = _execute_relation(raw_spark_connect, relation)
+        return Counter(
+            _decode_arrow_tuples(
+                (response for response in responses if response.HasField("arrow_batch")),
+                ["k1", "k2", "total"],
+            )
+        )
+
+    assert aggregate_rows(rollup) == Counter(
+        [
+            ("A", "X", 1),
+            ("A", "Y", 2),
+            ("B", "X", 3),
+            ("A", None, 3),
+            ("B", None, 3),
+            (None, None, 6),
+        ]
+    )
+    assert aggregate_rows(cube) == Counter(
+        [
+            ("A", "X", 1),
+            ("A", "Y", 2),
+            ("B", "X", 3),
+            ("A", None, 3),
+            ("B", None, 3),
+            (None, "X", 4),
+            (None, "Y", 2),
+            (None, None, 6),
+        ]
+    )
+    assert aggregate_rows(grouping_sets) == Counter(
+        [
+            ("A", None, 3),
+            ("B", None, 3),
+            (None, "X", 4),
+            (None, "Y", 2),
+            (None, None, 6),
+        ]
+    )
+
+    explicit_pivot = relations_pb2.Relation()
+    explicit_pivot.aggregate.input.CopyFrom(source)
+    explicit_pivot.aggregate.group_type = relations_pb2.Aggregate.GROUP_TYPE_PIVOT
+    explicit_pivot.aggregate.grouping_expressions.append(_attribute(expressions_pb2, "k1"))
+    explicit_pivot.aggregate.aggregate_expressions.append(
+        _function(expressions_pb2, "sum", _attribute(expressions_pb2, "v"))
+    )
+    explicit_pivot.aggregate.pivot.col.CopyFrom(_attribute(expressions_pb2, "k2"))
+    explicit_pivot.aggregate.pivot.values.extend(
+        [
+            _string_literal_value(expressions_pb2, "X"),
+            _string_literal_value(expressions_pb2, "Y"),
+        ]
+    )
+    pivot_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(relations_pb2, expressions_pb2, explicit_pivot, ["k1"]),
+    )
+
+    assert _decode_arrow_tuples(
+        (response for response in pivot_responses if response.HasField("arrow_batch")),
+        ["k1", "X", "Y"],
+    ) == [("A", 1, 2), ("B", 3, None)]
+
+    implicit_pivot = relations_pb2.Relation()
+    implicit_pivot.CopyFrom(explicit_pivot)
+    implicit_pivot.aggregate.pivot.values.clear()
+
+    proto = raw_spark_connect.proto
+    schema_request = proto.AnalyzePlanRequest(
+        session_id=raw_spark_connect.session_id,
+        user_context=raw_spark_connect.user_context,
+        client_type="spark-connect-tck",
+    )
+    schema_request.schema.plan.CopyFrom(proto.Plan(root=implicit_pivot))
+    schema_response = raw_spark_connect.stub.AnalyzePlan(schema_request, timeout=30)
+
+    _assert_unary_response_identity(schema_response, raw_spark_connect)
+    assert schema_response.WhichOneof("result") == "schema"
+    schema = schema_response.schema.schema
+    assert schema.WhichOneof("kind") == "struct"
+    assert [field.name for field in schema.struct.fields] == ["k1", "X", "Y"]

@@ -6,12 +6,12 @@ The source design is the Spark Connect specification document:
 
 ## Current implementation status
 
-The source document is working draft v0.41, updated 2026-08-24. It defines
+The source document is working draft v0.42, updated 2026-08-24. It defines
 `SC-1.0-P1` as the sole required profile and pins the reference implementation
 to Apache Spark 4.2.0 at commit
 `32f7299601108917fb01920a54e084595b7b3bf8`.
 
-The v0.41 scope differs materially from the earlier v0.8 draft. The required
+The v0.42 scope differs materially from the earlier v0.8 draft. The required
 RPCs are `ExecutePlan`, `AnalyzePlan`, `Config`, `Interrupt`, `ReleaseSession`,
 `FetchErrorDetails`, `CloneSession`, and `GetStatus`. Reattachment RPCs are
 optional, artifact RPCs are deferred, presentation relations are excluded, and
@@ -42,7 +42,10 @@ serialization. Drafts v0.35–v0.37 reorganize those requirements and correct
 document outline hierarchy without changing normative semantics. Drafts
 v0.40–v0.41 add source-validated join/statistics semantics and centralize the
 two client-only invalid-shape exceptions for dual-selector `AsOfJoin` and
-empty-column `StatFreqItems`.
+empty-column `StatFreqItems`. Draft v0.42 reconciles `AnalyzePlan.Schema` with
+implicit pivot discovery, expands the source-validation audit beyond Chapter
+16, and scopes the two client-only invalid-shape exceptions explicitly to
+Chapter 16 relations.
 
 Final profile membership will be controlled by
 `docs/spark-connect/spec/manifests/sc-1.0-p1.json` at an immutable Apache Spark
@@ -97,8 +100,10 @@ The current core slice constructs protobuf requests directly and covers:
     empty inner matches, and top-k ties.
 23. Direct as-of joins for backward/forward/nearest direction, using-column
     filtering, tolerance, exact-match, left-outer, and equal-distance behavior.
-24. Strict parsing, deterministic serialization, digest binding, action
-    validation, and subprocess error handling for the v0.41 deployment
+24. Direct aggregate rollup, cube, grouping-set, explicit pivot, and
+    omitted-pivot schema discovery semantics.
+25. Strict parsing, deterministic serialization, digest binding, action
+    validation, and subprocess error handling for the v0.42 deployment
     descriptor and adapter contracts.
 
 ## Known draft/reference gaps
@@ -140,6 +145,6 @@ a shared client/server filesystem, a particular catalog implementation, a
 complete Spark SQL dialect, presentation formatting, or vendor-specific
 extensions.
 
-Once the canonical v0.41 bundle is published, draft references must be replaced
+Once the canonical v0.42 bundle is published, draft references must be replaced
 with exact row IDs and the repository must record the bundle publication
 commit, path, and whole-file digest.

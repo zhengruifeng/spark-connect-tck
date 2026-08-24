@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-SPECIFICATION_VERSION = "1.0 draft v0.41"
+SPECIFICATION_VERSION = "1.0 draft v0.42"
 REFERENCE_SPARK_VERSION = "4.2.0"
 REFERENCE_SPARK_COMMIT = "32f7299601108917fb01920a54e084595b7b3bf8"
 SPECIFICATION_URL = (
@@ -19,7 +19,7 @@ SPECIFICATION_URL = (
 
 _CASE_ID = re.compile(r"TCK-[A-Z]+-\d{3}$")
 
-# The v0.41 SC-1.0-P1 service request inventory. Optional and deferred RPCs
+# The v0.42 SC-1.0-P1 service request inventory. Optional and deferred RPCs
 # intentionally do not contribute to a core conformance result.
 REQUIRED_WIRE_RPCS = frozenset(
     {
@@ -69,7 +69,7 @@ CASES = (
     ),
     TckCase(
         "TCK-WIRE-002",
-        "Direct requests exercise every AnalyzePlan operation required by v0.41.",
+        "Direct requests exercise every AnalyzePlan operation required by v0.42.",
         "SC-1.0-P1-WIRE",
         (
             "gRPC RPCs / AnalyzePlan",
@@ -471,6 +471,26 @@ CASES = (
             "Expressions / SortOrder",
         ),
         ("ExecutePlan",),
+    ),
+    TckCase(
+        "TCK-WIRE-032",
+        "Direct aggregate plans preserve rollup, cube, grouping-set, pivot, and "
+        "pivot-schema-discovery semantics.",
+        "SC-1.0-P1-WIRE",
+        (
+            "Relations / Aggregate",
+            "Relations / LocalRelation",
+            "Aggregate / Rollup",
+            "Aggregate / Cube",
+            "Aggregate / GroupingSets",
+            "Aggregate / Pivot",
+            "AnalyzePlan / Schema",
+            "Expressions / Literal",
+            "Expressions / UnresolvedAttribute",
+            "Expressions / UnresolvedFunction",
+            "Expressions / Alias",
+        ),
+        ("AnalyzePlan", "ExecutePlan"),
     ),
     TckCase(
         "TCK-SQL-001",
