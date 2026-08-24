@@ -43,6 +43,8 @@ fails if a test has no registered `TCK-<AREA>-<NUMBER>` reference.
 | `TCK-WIRE-026` | Arrow mappings | Narrow/large String and Binary values round-trip recursively through nested types. |
 | `TCK-WIRE-027` | Relations/expressions | Direct crosstab, describe, and frequent-item plans preserve statistical results. |
 | `TCK-WIRE-028` | Relations/expressions | Direct regex selection, struct extraction, and struct update expressions preserve values. |
+| `TCK-WIRE-029` | Relations/expressions | Direct referenced SQL relations and named observation metrics preserve results and response values. |
+| `TCK-WIRE-030` | Relations/expressions | Direct exact nearest-by joins preserve top-k and left-outer empty-match semantics. |
 | `TCK-SQL-001` | Portable SQL | Direct `Relation.SQL` plans cover required queries, joins, clauses, functions, and typed parameters. |
 | `TCK-SQL-002` | Portable SQL | A direct `SqlCommand.input` returns an equivalent executable relation. |
 | `TCK-SQL-003` | Portable SQL types | Direct casts assert exact Boolean, numeric, decimal, date, and timestamp schemas. |

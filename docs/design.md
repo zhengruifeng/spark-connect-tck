@@ -87,7 +87,10 @@ The current core slice constructs protobuf requests directly and covers:
 18. Direct crosstab, describe, and frequent-item statistical relations.
 19. Direct unresolved-regex selection, struct extraction, and struct update
     expressions.
-20. Strict parsing, deterministic serialization, digest binding, action
+20. Direct referenced SQL relations and named observation metrics.
+21. Direct exact nearest-by joins, including top-k and left-outer empty-match
+    behavior.
+22. Strict parsing, deterministic serialization, digest binding, action
     validation, and subprocess error handling for the v0.37 deployment
     descriptor and adapter contracts.
 

@@ -130,6 +130,13 @@ def _string_literal(expressions: Any, value: str) -> Any:
     return expression
 
 
+def _bool_literal(expressions: Any, value: bool) -> Any:
+    """Build a Boolean literal expression without using a Column client."""
+    expression = expressions.Expression()
+    expression.literal.boolean = value
+    return expression
+
+
 def _expression_string(expressions: Any, text: str) -> Any:
     """Build an ExpressionString node without using a Column expression parser."""
     expression = expressions.Expression()
@@ -2493,3 +2500,164 @@ def test_tck_wire_028_regex_extract_and_update_expressions_are_direct(
         (response for response in responses if response.HasField("arrow_batch")),
         ["alpha", "beta", "extracted", "updated", "dropped"],
     ) == [(1, 2, 3, {"left": 3, "right": 10}, {"left": 3})]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-029")
+def test_tck_wire_029_with_relations_and_collect_metrics_are_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Expand a referenced relation and return named observation metrics via raw protobuf."""
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    with_relations = relations_pb2.Relation()
+    with_relations.with_relations.root.sql.query = "SELECT id + 1 AS id FROM numbers"
+    numbers = relations_pb2.Relation()
+    numbers.subquery_alias.alias = "numbers"
+    numbers.subquery_alias.input.CopyFrom(_range_relation(relations_pb2, end=3))
+    with_relations.with_relations.references.append(numbers)
+
+    with_relations_responses = _execute_relation(raw_spark_connect, with_relations)
+    assert _decode_arrow_rows(
+        response for response in with_relations_responses if response.HasField("arrow_batch")
+    ) == [1, 2, 3]
+
+    collected = relations_pb2.Relation()
+    collected.common.plan_id = 29
+    collected.collect_metrics.input.CopyFrom(_range_relation(relations_pb2, end=4))
+    collected.collect_metrics.name = "tck_wire_029_metrics"
+    collected.collect_metrics.metrics.extend(
+        [
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "sum", _attribute(expressions_pb2, "id")),
+                "total",
+            ),
+            _alias(
+                expressions_pb2,
+                _function(expressions_pb2, "count", _attribute(expressions_pb2, "id")),
+                "count",
+            ),
+        ]
+    )
+
+    collected_responses = _execute_relation(raw_spark_connect, collected)
+    assert _decode_arrow_rows(
+        response for response in collected_responses if response.HasField("arrow_batch")
+    ) == [0, 1, 2, 3]
+    observed_metrics = [
+        observed for response in collected_responses for observed in response.observed_metrics
+    ]
+    assert len(observed_metrics) == 1
+    observed = observed_metrics[0]
+    assert observed.name == "tck_wire_029_metrics"
+    assert observed.plan_id == 29
+    assert list(observed.keys) == ["total", "count"]
+    assert [value.long for value in observed.values] == [6, 4]
+
+
+@pytest.mark.smoke
+@pytest.mark.tck_case("TCK-WIRE-030")
+def test_tck_wire_030_nearest_by_join_exact_mode_is_direct(
+    raw_spark_connect: RawSparkConnectSession,
+) -> None:
+    """Rank right-side candidates with direct exact NearestByJoin relation messages."""
+    import pyarrow as pa
+    from pyspark.sql.connect.proto import expressions_pb2, relations_pb2
+
+    users = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "user_id": pa.array([1, 2, 3], type=pa.int64()),
+                "score": pa.array([10.0, 20.0, 30.0], type=pa.float64()),
+            }
+        ),
+    )
+    products = _local_relation(
+        relations_pb2,
+        pa.table(
+            {
+                "product": pa.array(["A", "B", "C"]),
+                "pscore": pa.array([11.0, 22.0, 5.0], type=pa.float64()),
+            }
+        ),
+    )
+    ranking_expression = _function(
+        expressions_pb2,
+        "abs",
+        _function(
+            expressions_pb2,
+            "-",
+            _attribute(expressions_pb2, "score"),
+            _attribute(expressions_pb2, "pscore"),
+        ),
+    )
+
+    nearest_two = relations_pb2.Relation()
+    nearest_two.nearest_by_join.left.CopyFrom(users)
+    nearest_two.nearest_by_join.right.CopyFrom(products)
+    nearest_two.nearest_by_join.ranking_expression.CopyFrom(ranking_expression)
+    nearest_two.nearest_by_join.num_results = 2
+    nearest_two.nearest_by_join.join_type = "inner"
+    nearest_two.nearest_by_join.mode = "exact"
+    nearest_two.nearest_by_join.direction = "distance"
+
+    nearest_two_selected = relations_pb2.Relation()
+    nearest_two_selected.project.input.CopyFrom(nearest_two)
+    nearest_two_selected.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "user_id"),
+            _attribute(expressions_pb2, "product"),
+        ]
+    )
+
+    empty_products = relations_pb2.Relation()
+    empty_products.filter.input.CopyFrom(products)
+    empty_products.filter.condition.CopyFrom(_bool_literal(expressions_pb2, False))
+
+    nearest_left_outer = relations_pb2.Relation()
+    nearest_left_outer.nearest_by_join.left.CopyFrom(users)
+    nearest_left_outer.nearest_by_join.right.CopyFrom(empty_products)
+    nearest_left_outer.nearest_by_join.ranking_expression.CopyFrom(ranking_expression)
+    nearest_left_outer.nearest_by_join.num_results = 1
+    nearest_left_outer.nearest_by_join.join_type = "leftouter"
+    nearest_left_outer.nearest_by_join.mode = "exact"
+    nearest_left_outer.nearest_by_join.direction = "distance"
+
+    nearest_left_outer_selected = relations_pb2.Relation()
+    nearest_left_outer_selected.project.input.CopyFrom(nearest_left_outer)
+    nearest_left_outer_selected.project.expressions.extend(
+        [
+            _attribute(expressions_pb2, "user_id"),
+            _attribute(expressions_pb2, "product"),
+        ]
+    )
+
+    nearest_two_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(
+            relations_pb2,
+            expressions_pb2,
+            nearest_two_selected,
+            ["user_id", "product"],
+        ),
+    )
+    left_outer_responses = _execute_relation(
+        raw_spark_connect,
+        _sorted_relation(
+            relations_pb2,
+            expressions_pb2,
+            nearest_left_outer_selected,
+            ["user_id"],
+        ),
+    )
+
+    assert _decode_arrow_tuples(
+        (response for response in nearest_two_responses if response.HasField("arrow_batch")),
+        ["user_id", "product"],
+    ) == [(1, "A"), (1, "C"), (2, "A"), (2, "B"), (3, "A"), (3, "B")]
+    assert _decode_arrow_tuples(
+        (response for response in left_outer_responses if response.HasField("arrow_batch")),
+        ["user_id", "product"],
+    ) == [(1, None), (2, None), (3, None)]
